@@ -16,6 +16,10 @@ El módulo tiene **6 unidades**, una por cada **Resultado de Aprendizaje (RA)**.
 | **6** | Normativa y protección de datos | 8 h | 10 % | Cumplimiento + anonimizador |
 | | **TOTAL** | **90 h** | **100 %** | |
 
+## FFE
+
+- Fase de Formación en empresa se tomará del RA5% de su 25% = 15% en clase y 10% en Empresa.
+
 ## Antes de empezar
 
 1. Prepara tu **entorno de trabajo** y el **laboratorio**: [Entorno y laboratorio](recursos/entorno.md).
