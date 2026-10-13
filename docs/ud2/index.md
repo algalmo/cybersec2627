@@ -1,1015 +1,720 @@
-# Unidad 2 · Seguridad activa, malware y red
+# Unidad 2 · Seguridad activa: defender un sistema en marcha
 
-> **Módulo:** CMO-314 · Ciberseguridad · **RA2** · **Duración:** 16 h · **Peso:** 20 % · **Herramienta:** Python 3 (tipado) + `re`
+> **Módulo:** CMO-314 · Ciberseguridad · **RA2** · **Duración:** 16 h · **Peso:** 20 % · **Herramientas:** Python 3 + Docker
 
-Si la UT1 iba de **proteger datos en reposo**, esta va de **vigilar lo que se mueve**: tráfico, sesiones, intentos de acceso. La herramienta que vas a dominar es `re` (expresiones regulares) — la navaja suiza para convertir un log en bruto, ilegible, en datos que puedes analizar. Al terminar habrás construido un **detector de fuerza bruta** capaz de leer un registro de autenticación y señalar, con criterio, qué IP está atacando.
+Si la UT1 iba de **proteger datos**, esta va de **defender un sistema que está funcionando**: reconocer el malware que lo amenaza, comprobar que lo que instalas es de fiar y está actualizado, entender cómo entra un atacante paso a paso, y montar las defensas que lo detectan y lo frenan (antivirus, inventario de servicios, sistemas de detección de intrusiones).
 
-!!! reto "El reto de la unidad"
-    **Caza un ataque de fuerza bruta escondido en un registro de accesos.** Vas a construir un detector que lea un log y señale las IP sospechosas. Todo lo de abajo es tu entrenamiento para resolverlo tú solo.
+Lo vas a aprender como se hace en el mundo real: con **laboratorios**. Cada laboratorio es un montaje pequeño, en tu ordenador o en Docker, que haces **paso a paso** y del que sacas una conclusión. No hay que memorizar: hay que **montarlo y verlo funcionar**.
+
+!!! info "Esta unidad se evalúa con test"
+    La UD1 y la UD2 forman el **1.er trimestre**, que se evalúa con un **examen tipo test**. Los laboratorios y los ejercicios **no puntúan**: son tu forma de entender la materia y de llegar preparado/a al test. Al final tienes un **simulacro** calcado al examen.
+
+## Qué vas a montar (mapa de laboratorios)
 
 ```mermaid
 flowchart TB
-    A["Amenazas y malware"] --> B["Tipos de ataque de red"]
-    B --> C["Expresiones regulares<br/>con re"]
-    C --> D["Parsear logs<br/>con grupos con nombre"]
-    D --> E["Contar y detectar<br/>patrones (Counter)"]
-    E --> F["Monitorización<br/>y SIEM"]
-    D --> P["RETO<br/>Detector de fuerza bruta"]
-    E --> P
-    style P fill:#d1fae5,color:#065f46,stroke:#10b981,stroke-width:3px
-    style A fill:#dbeafe,color:#1e3a8a,stroke:#3b82f6,stroke-width:2px
+    L1["🧪 Lab 1<br/>Clasificar y analizar malware"] --> L2["🧪 Lab 2<br/>¿Es de fiar? Origen y actualización"]
+    L2 --> L3["🧪 Lab 3<br/>Anatomía de un ataque"]
+    L3 --> L4["🧪 Lab 4<br/>Antivirus real con ClamAV"]
+    L4 --> L5["🧪 Lab 5<br/>Inventario de servicios + IDS"]
+    L5 --> L6["🧪 Lab 6<br/>Seguridad wifi"]
+    L6 --> R["🎯 Reto práctico"]
+    R --> T["📝 Simulacro de test"]
+    style R fill:#d1fae5,color:#065f46,stroke:#10b981,stroke-width:2px
+    style T fill:#dbeafe,color:#1e3a8a,stroke:#3b82f6,stroke-width:2px
 ```
 
-**Qué sabrás hacer al terminar:** distinguir los tipos de malware y de ataque de red más comunes · escribir expresiones regulares con grupos con nombre · parsear un log línea a línea y extraer campos estructurados · contar y detectar patrones con `collections.Counter` · explicar qué hace un SIEM y por qué existe · construir una CLI de detección con `argparse`, tipada y probada.
-
-**Cómo se trabaja (aula invertida):** lees la sección y ejecutas los ejemplos antes de clase → en clase resuelves las actividades y avanzas el reto en parejas.
-
-!!! danger "Recordatorio de uso ético"
-    Analizarás logs y patrones de ataque **con fines defensivos**, sobre datos de laboratorio o tuyos. Nunca contra sistemas ajenos. Ver [Uso ético y legal](../recursos/uso-etico.md).
-
----
-
-## 1. Amenazas y malware
-
-**Malware** es cualquier software diseñado para dañar, robar o tomar el control sin permiso. No es un tipo, es una familia:
-
-| Tipo | Cómo actúa | Ejemplo de objetivo |
+| Lab | Qué montas | Criterios del RA2 que tocas |
 |---|---|---|
-| **Virus** | Necesita un fichero "hospedador" para propagarse | Infecta ejecutables |
-| **Gusano (worm)** | Se replica solo, sin hospedador, viaja por red | Satura redes enteras |
-| **Troyano** | Se disfraza de software legítimo | Abre una puerta trasera |
-| **Ransomware** | Cifra los datos y pide un rescate | Extorsión (§UT1 tenía el hash del lado defensivo) |
-| **Spyware** | Roba información en silencio | Contraseñas, pulsaciones de teclado |
+| 1 | Clasificador de amenazas + análisis de una muestra inerte | 2.a, 2.d |
+| 2 | Verificador de origen (checksum) y de actualizaciones | 2.b |
+| 3 | Reconstructor de las fases de un ataque a partir de un log | 2.c |
+| 4 | Antivirus **ClamAV** en Docker contra el fichero EICAR | 2.d, 2.e |
+| 5 | Inventario de servicios de red + mini-IDS por reglas | 2.h, 2.i |
+| 6 | Análisis de la seguridad de redes wifi | 2.g |
 
-```python title="clasificar_malware.py"
-COMPORTAMIENTO_A_TIPO = {
-    "autorreplica_por_red": "gusano",
-    "requiere_archivo_hospedador": "virus",
-    "cifra_y_pide_rescate": "ransomware",
-    "se_oculta_en_utilidad_legitima": "troyano",
-    "roba_datos_en_silencio": "spyware",
+> **Nota.** El cifrado, las firmas y los certificados (criterio 2.f) ya los montaste en la UT1, así que aquí no se repiten: lo que allí aprendiste es exactamente lo que se usa para proteger el tráfico en redes públicas.
+
+!!! danger "La norma de siempre"
+    Todo esto se practica **solo** en tu equipo, en los contenedores que montes, o en el laboratorio de clase. Analizar malware, escanear servicios o auditar wifis **ajenas** sin permiso es delito. Ver [Uso ético y legal](../recursos/uso-etico.md).
+
+## 0 · Prepara el entorno
+
+Necesitas Python 3 y **Docker** (lo usarás en los labs 4 y 5). Comprueba que están:
+
+```bash title="Terminal"
+python --version      # 3.10 o superior
+docker --version      # cualquier versión reciente
+```
+
+Crea una carpeta `ut2-labs` y trabaja ahí. Cada laboratorio te dice qué ficheros crear.
+
+## Lab 1 · Clasificar y analizar malware (CE 2.a, 2.d)
+
+**Objetivo:** reconocer las familias de malware y analizar una "muestra" sospechosa **sin ejecutarla**, en un entorno controlado.
+
+### 1.1 Las familias de malware
+
+El **malware** (software malicioso) se clasifica por **cómo se comporta**:
+
+| Familia | Qué hace | ¿Se propaga sola? |
+|---|---|---|
+| **Virus** | Se pega a un fichero y se activa al abrirlo | No, necesita que ejecutes el fichero |
+| **Gusano** | Se copia solo por la red de equipo en equipo | Sí |
+| **Troyano** | Se disfraza de programa útil | No, te engaña para instalarlo |
+| **Ransomware** | Cifra tus ficheros y pide rescate | A menudo sí (como un gusano) |
+| **Spyware** | Espía en silencio (teclas, contraseñas) | No |
+| **Adware** | Inunda de publicidad | No |
+| **Rootkit** | Se esconde en lo más profundo del sistema | No |
+
+**Paso 1.** Crea `catalogo.py` y clasifica amenazas reales conocidas:
+
+```python title="catalogo.py"
+from dataclasses import dataclass
+
+@dataclass
+class Amenaza:
+    nombre: str
+    familia: str
+    se_propaga_sola: bool
+
+CATALOGO = [
+    Amenaza("ILOVEYOU", "gusano", True),
+    Amenaza("WannaCry", "ransomware", True),
+    Amenaza("Zeus", "troyano", False),
+    Amenaza("Pegasus", "spyware", False),
+]
+
+for a in CATALOGO:
+    modo = "se propaga sola" if a.se_propaga_sola else "necesita acción del usuario"
+    print(f"{a.nombre:10} -> {a.familia:11} ({modo})")
+```
+
+```text title="Salida"
+ILOVEYOU   -> gusano      (se propaga sola)
+WannaCry   -> ransomware  (se propaga sola)
+Zeus       -> troyano     (necesita acción del usuario)
+Pegasus    -> spyware     (necesita acción del usuario)
+```
+
+### 1.2 Analizar una muestra por su firma (sin ejecutarla)
+
+Un antivirus no "ejecuta" el malware para ver qué hace: lo reconoce por su **firma**, que no es más que el **hash** del fichero (¡lo que aprendiste en la UT1!). Si el hash coincide con uno de su base de datos de amenazas, lo detecta.
+
+**Paso 2.** Crea `analizador.py`. Usaremos el fichero **EICAR**, un texto inofensivo que todos los antivirus reconocen como "virus de prueba" (sirve justo para esto, sin ningún riesgo):
+
+```python title="analizador.py"
+import hashlib
+
+# Mini "base de datos de firmas" de un antivirus
+FIRMAS_CONOCIDAS = {
+    "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f":
+        "EICAR (fichero de prueba de antivirus)",
 }
 
-def clasifica(comportamiento: str) -> str:
-    return COMPORTAMIENTO_A_TIPO.get(comportamiento, "desconocido")
+def analizar(contenido: bytes) -> str:
+    firma = hashlib.sha256(contenido).hexdigest()
+    return FIRMAS_CONOCIDAS.get(firma, "limpio (no está en la base de firmas)")
 
-for c in ["cifra_y_pide_rescate", "autorreplica_por_red", "algo_nuevo"]:
-    print(f"{c:32} -> {clasifica(c)}")
+eicar = rb'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
+print("Muestra EICAR :", analizar(eicar))
+print("Fichero normal:", analizar(b"mis apuntes de clase"))
 ```
 
 ```text title="Salida"
-cifra_y_pide_rescate            -> ransomware
-autorreplica_por_red            -> gusano
-algo_nuevo                      -> desconocido
+Muestra EICAR : EICAR (fichero de prueba de antivirus)
+Fichero normal: limpio (no está en la base de firmas)
 ```
 
-!!! reto "Reto rápido 1"
-    Un ransomware moderno a menudo **también** exfiltra datos antes de cifrar (doble extorsión — lo viste en la UT1). ¿Debería `clasifica()` devolver dos etiquetas en ese caso? ¿Cómo cambiarías la función para permitirlo?
+!!! warning "Límite de las firmas"
+    Detectar por hash tiene un punto débil: si el atacante cambia **un solo byte** del malware, su hash cambia y la firma ya no lo reconoce. Por eso los antivirus modernos añaden **análisis de comportamiento** (heurística): observan lo que el programa *intenta hacer*, no solo su hash.
+
+!!! tip "Billete de salida del Lab 1"
+    Explica con tus palabras: ¿por qué un gusano es más peligroso para una red de oficina que un troyano? ¿Y por qué cambiar un byte de un virus lo hace invisible a la detección por firma?
 
 ---
 
-## 2. Ataques de red más comunes
+## Lab 2 · ¿Es de fiar? Origen y actualización (CE 2.b)
 
-| Ataque | Qué hace | Pista típica en el log |
-|---|---|---|
-| **Fuerza bruta** | Prueba contraseñas hasta acertar | Muchos `FALLO` seguidos, misma IP |
-| **DoS / DDoS** | Satura un servicio hasta tumbarlo | Picos enormes de peticiones |
-| **Phishing** | Engaña para robar credenciales | (no deja huella en logs de servidor) |
-| **Escaneo de puertos** | Reconocimiento previo a un ataque | Muchas IP-destino distintas en poco tiempo desde una IP |
-| **Man-in-the-middle** | Se interpone en una comunicación | Certificados TLS inesperados |
+**Objetivo:** antes de instalar algo, comprobar que **viene de quien dice** y que el sistema está **al día**. Dos de los agujeros más explotados: instalar software manipulado y tener programas viejos con fallos conocidos.
+
+### 2.1 Verificar el origen con el checksum publicado
+
+Cuando descargas software serio, el fabricante publica el **hash SHA-256** del fichero. Si el de tu descarga coincide, nadie lo ha manipulado por el camino.
+
+**Paso 1.** Crea `verificar_descarga.py`:
+
+```python title="verificar_descarga.py"
+import hashlib
+
+def descarga_integra(fichero: bytes, checksum_publicado: str) -> bool:
+    return hashlib.sha256(fichero).hexdigest() == checksum_publicado.strip().lower()
+
+# Simulamos: descargamos un instalador y el fabricante publicó su checksum
+instalador = b"contenido-del-instalador-v2.1"
+checksum_oficial = hashlib.sha256(instalador).hexdigest()
+
+print("Descarga legítima  :", descarga_integra(instalador, checksum_oficial))
+print("Descarga manipulada:", descarga_integra(b"instalador+malware", checksum_oficial))
+```
+
+```text title="Salida"
+Descarga legítima  : True
+Descarga manipulada: False
+```
+
+> En Linux esto se hace a diario con `sha256sum fichero.iso` y comparando con el valor de la web oficial. Aquí lo has programado tú.
+
+### 2.2 Comprobar el estado de actualización
+
+Un programa desactualizado es una puerta abierta: sus fallos de seguridad ya son públicos. Hay que saber **qué está viejo**.
+
+**Paso 2.** Crea `actualizaciones.py`:
+
+```python title="actualizaciones.py"
+def necesita_actualizar(instalada: str, ultima: str) -> bool:
+    actual = [int(x) for x in instalada.split(".")]
+    nueva = [int(x) for x in ultima.split(".")]
+    return actual < nueva
+
+# Inventario: (versión instalada, última disponible)
+paquetes = {
+    "openssl": ("3.0.2", "3.0.13"),
+    "nginx":   ("1.24.0", "1.24.0"),
+    "python":  ("3.10.6", "3.12.1"),
+}
+
+for nombre, (instalada, ultima) in paquetes.items():
+    estado = "⚠️ ACTUALIZAR" if necesita_actualizar(instalada, ultima) else "al día"
+    print(f"{nombre:8} {instalada:9} -> {ultima:9} {estado}")
+```
+
+```text title="Salida"
+openssl  3.0.2     -> 3.0.13    ⚠️ ACTUALIZAR
+nginx    1.24.0    -> 1.24.0    al día
+python   3.10.6    -> 3.12.1    ⚠️ ACTUALIZAR
+```
+
+> Comparar la versión como **lista de números** (`[3, 0, 2] < [3, 0, 13]`) funciona bien incluso con `1.9` vs `1.10`, cosa que fallaría si lo compararas como texto.
+
+!!! tip "Billete de salida del Lab 2"
+    ¿Por qué un atacante prefiere un servidor con software viejo? Busca en qué consiste un **CVE** y pon un ejemplo de uno famoso.
+
+---
+
+## Lab 3 · Anatomía de un ataque (CE 2.c)
+
+**Objetivo:** un ataque casi nunca es un único golpe: sigue **fases** (reconocer → entrar → afianzarse → actuar). Si reconoces las fases en los registros, puedes cortar el ataque antes de que llegue al final.
 
 ```mermaid
 flowchart LR
-    R["Reconocimiento<br/>(escaneo)"] --> A["Acceso<br/>(fuerza bruta, phishing)"]
-    A --> P["Persistencia<br/>(troyano, backdoor)"]
-    P --> Ob["Objetivo<br/>(robo, cifrado, sabotaje)"]
+    R["① Reconocimiento<br/>escanea qué hay"] --> A["② Acceso<br/>prueba contraseñas"]
+    A --> P["③ Persistencia<br/>deja una puerta trasera"]
+    P --> C["④ Exfiltración / C2<br/>roba o recibe órdenes"]
 ```
 
-!!! analogia "Analogía"
-    Un atacante de fuerza bruta es como alguien probando llaves en una cerradura, una tras otra, toda la noche. No hace ruido de cristal roto — pero deja **huellas**: la misma persona, la misma puerta, muchas veces seguidas. Eso es justo lo que vas a detectar.
+**Paso 1.** Crea `anatomia.py` con el registro de un ataque real y clasifica cada línea en su fase:
 
----
-
-## 3. Expresiones regulares con `re`: la herramienta de esta unidad
-
-Una expresión regular describe un **patrón** de texto. `re` es el módulo de Python para buscarlo, extraerlo o sustituirlo.
-
-```python title="regex_basico.py"
-import re
-
-texto = "Conexión desde 10.0.20.5 al puerto 22"
-
-# search: busca el patrón en cualquier parte
-m = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", texto)   # una IPv4
-print(m.group() if m else None)
-
-# findall: todas las coincidencias
-puertos = re.findall(r"puerto (\d+)", texto)
-print(puertos)
-
-# sub: sustituir
-anonimizado = re.sub(r"\d{1,3}(?:\.\d{1,3}){3}", "[IP]", texto)
-print(anonimizado)
-```
-
-```text title="Salida"
-10.0.20.5
-['22']
-Conexión desde [IP] al puerto 22
-```
-
-### 3.1 Grupos con nombre: la técnica que más vas a usar
-
-En vez de acordarte de que "la IP es el grupo 2", la pides **por su nombre**:
-
-```python title="grupos_con_nombre.py"
-import re
-
-patron = re.compile(
-    r"usuario=(?P<usuario>\S+)\s+ip=(?P<ip>\S+)\s+estado=(?P<estado>OK|FALLO)"
-)
-linea = "2026-05-01 10:00:01 sshd usuario=root ip=10.0.20.5 estado=FALLO"
-
-m = patron.search(linea)
-if m:
-    print(m["usuario"], m["ip"], m["estado"])
-    print(m.groupdict())    # los tres campos como diccionario, muy útil
-```
-
-```text title="Salida"
-root 10.0.20.5 FALLO
-{'usuario': 'root', 'ip': '10.0.20.5', 'estado': 'FALLO'}
-```
-
-| Símbolo | Significa |
-|---|---|
-| `\d` | Un dígito | `\S` | Un carácter que no es espacio |
-| `+` | Uno o más | `*` | Cero o más |
-| `(?P<nombre>...)` | Grupo con nombre | `\s+` | Uno o más espacios |
-| `search()` | Busca en cualquier parte | `fullmatch()` | Debe encajar la cadena entera |
-
-!!! warning "Atención"
-    `re.search` devuelve `None` si no encuentra nada — **siempre** comprueba con `if m:` antes de usar `m["campo"]`, o tendrás un `TypeError: NoneType is not subscriptable`.
-
-!!! reto "Reto rápido 2"
-    Cambia el patrón para que también capture la **fecha** al principio de la línea (`2026-05-01`) en un grupo `fecha`. Pista: `\d{4}-\d{2}-\d{2}`.
-
----
-
-## 4. Parsear un log completo
-
-Un log real son muchas líneas. La estrategia: parsear cada línea, descartar las que no encajan, y quedarte con una lista de eventos estructurados.
-
-```python title="parsear_log.py"
-import re
-
-PATRON = re.compile(r"usuario=(?P<usuario>\S+)\s+ip=(?P<ip>\S+)\s+estado=(?P<estado>OK|FALLO)")
-
-def parsear_evento(linea: str) -> dict[str, str] | None:
-    m = PATRON.search(linea)
-    return m.groupdict() if m else None
-
-def parsear_log(texto: str) -> list[dict[str, str]]:
-    eventos = []
-    for linea in texto.splitlines():
-        evento = parsear_evento(linea)
-        if evento is not None:
-            eventos.append(evento)
-    return eventos
-
+```python title="anatomia.py"
 LOG = """\
-2026-05-01 10:00:01 sshd usuario=root ip=10.0.20.5 estado=FALLO
-2026-05-01 10:00:02 sshd usuario=root ip=10.0.20.5 estado=FALLO
-linea corrupta sin formato
-2026-05-01 10:00:03 sshd usuario=ana ip=10.0.20.9 estado=OK
-"""
+08:00 203.0.113.9 escaneo de puertos 22,80,443
+08:05 203.0.113.9 intento ssh usuario=root FALLO
+08:06 203.0.113.9 intento ssh usuario=root FALLO
+08:07 203.0.113.9 intento ssh usuario=root OK
+08:10 203.0.113.9 descarga /tmp/puerta_trasera.sh
+08:15 203.0.113.9 conexion saliente a 198.51.100.4:4444"""
 
-eventos = parsear_log(LOG)
-print(f"{len(eventos)} eventos válidos de {len(LOG.splitlines())} líneas")
-for e in eventos:
-    print(e)
+def fase(linea: str) -> str:
+    if "escaneo" in linea:   return "1-Reconocimiento"
+    if "FALLO" in linea:     return "2-Intento de acceso"
+    if "OK" in linea:        return "3-Acceso conseguido"
+    if "descarga" in linea:  return "4-Persistencia"
+    if "saliente" in linea:  return "5-Exfiltración/C2"
+    return "?"
+
+for linea in LOG.splitlines():
+    print(f"[{fase(linea):20}] {linea}")
 ```
 
 ```text title="Salida"
-3 eventos válidos de 4 líneas
-{'usuario': 'root', 'ip': '10.0.20.5', 'estado': 'FALLO'}
-{'usuario': 'root', 'ip': '10.0.20.5', 'estado': 'FALLO'}
-{'usuario': 'ana', 'ip': '10.0.20.9', 'estado': 'OK'}
+[1-Reconocimiento    ] 08:00 203.0.113.9 escaneo de puertos 22,80,443
+[2-Intento de acceso ] 08:05 203.0.113.9 intento ssh usuario=root FALLO
+[2-Intento de acceso ] 08:06 203.0.113.9 intento ssh usuario=root FALLO
+[3-Acceso conseguido ] 08:07 203.0.113.9 intento ssh usuario=root OK
+[4-Persistencia      ] 08:10 203.0.113.9 descarga /tmp/puerta_trasera.sh
+[5-Exfiltración/C2   ] 08:15 203.0.113.9 conexion saliente a 198.51.100.4:4444
 ```
 
-> La línea corrupta se descarta sola, sin que el programa se caiga. Esto es clave: **un log real siempre tiene basura**, y tu parser tiene que sobrevivir a ella.
+> Las 5 fases se corresponden con las de la **Cyber Kill Chain** (Lockheed Martin) y el marco **MITRE ATT&CK**, el vocabulario estándar que usan los equipos de seguridad. **Medida preventiva:** bloquear la IP tras los primeros FALLO (fase 2) habría cortado el ataque antes del acceso.
+
+!!! tip "Billete de salida del Lab 3"
+    Para cada fase, propón **una** contramedida (preventiva o paliativa). Por ejemplo, en la fase 2: limitar los intentos de login.
 
 ---
 
-## 5. Contar y detectar: `collections.Counter`
+## Lab 4 · Antivirus real: ClamAV en Docker (CE 2.d, 2.e)
 
-Con los eventos parseados, contar fallos por IP es una línea:
+**Objetivo:** montar un **antivirus de verdad** (ClamAV, libre y muy usado) en un contenedor y lanzarlo contra el fichero EICAR del Lab 1. Aquí no simulas: usas la herramienta real.
 
-```python title="detectar_umbral.py"
-from collections import Counter
+**Paso 1.** Crea una carpeta `muestras` y mete dentro el fichero EICAR y uno limpio:
 
-def contar_fallos_por_ip(eventos: list[dict[str, str]]) -> dict[str, int]:
-    contador: Counter[str] = Counter()
-    for e in eventos:
-        if e["estado"] == "FALLO":
-            contador[e["ip"]] += 1
-    return dict(contador)
+```bash title="Terminal"
+mkdir muestras
+printf 'X5O!P%%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > muestras/sospechoso.txt
+echo "estos son mis apuntes" > muestras/apuntes.txt
+```
 
-def ips_sospechosas(eventos: list[dict[str, str]], umbral: int = 5) -> list[str]:
-    fallos = contar_fallos_por_ip(eventos)
-    return sorted([ip for ip, n in fallos.items() if n >= umbral],
-                  key=lambda ip: -fallos[ip])
+**Paso 2.** Lanza ClamAV en Docker apuntando a esa carpeta. La imagen oficial `clamav/clamav` trae el motor y las firmas:
 
-eventos = [{"usuario": "root", "ip": "10.0.20.5", "estado": "FALLO"}] * 5
-eventos += [{"usuario": "ana", "ip": "10.0.20.9", "estado": "OK"}]
-print(contar_fallos_por_ip(eventos))
-print(ips_sospechosas(eventos, umbral=5))
+```bash title="Terminal"
+docker run --rm -v "$PWD/muestras:/scan" clamav/clamav:latest clamscan -v /scan
+```
+
+**Paso 3.** Observa el informe. ClamAV detecta el EICAR y deja en paz el fichero de apuntes:
+
+```text title="Salida (resumida)"
+/scan/apuntes.txt: OK
+/scan/sospechoso.txt: Win.Test.EICAR_HDB-1 FOUND
+
+----------- SCAN SUMMARY -----------
+Infected files: 1
+```
+
+> `Win.Test.EICAR_HDB-1 FOUND` es exactamente lo que verías con un virus real: el nombre de la amenaza y la palabra `FOUND`. La diferencia es que EICAR es inofensivo. **Esto es el criterio 2.e en acción:** una aplicación específica que detecta y permitiría eliminar el software malicioso (`clamscan --remove`).
+
+!!! warning "La primera vez tarda"
+    ClamAV descarga su base de firmas al arrancar (unos minutos la primera vez). Si tu red del aula lo bloquea, el profesor puede dar una imagen con las firmas ya incluidas.
+
+!!! tip "Billete de salida del Lab 4"
+    ¿Qué diferencia hay entre `clamscan` (bajo demanda) y un antivirus "residente" que vigila en tiempo real? ¿Cuándo usarías cada uno?
+
+---
+
+## Lab 5 · Inventario de servicios + mini-IDS (CE 2.h, 2.i)
+
+**Objetivo:** dos defensas clave. Primero, saber **qué puertas tiene abiertas** tu sistema (no puedes proteger lo que no sabes que existe). Después, un **IDS** (sistema de detección de intrusiones) que vigila el tráfico y avisa de lo sospechoso.
+
+### 5.1 Inventario de servicios de red
+
+En Linux, `ss -tlnp` lista los servicios que están **escuchando**. Vamos a procesar esa salida y marcar los puertos que **no** deberían estar abiertos.
+
+**Paso 1.** Crea `inventario.py`:
+
+```python title="inventario.py"
+import re
+
+# Salida simplificada de 'ss -tlnp' (puerto y servicio que escucha)
+SS = """\
+tcp LISTEN 0.0.0.0:22 sshd
+tcp LISTEN 0.0.0.0:80 nginx
+tcp LISTEN 0.0.0.0:23 telnetd
+tcp LISTEN 127.0.0.1:5432 postgres"""
+
+AUTORIZADOS = {22, 80, 443}
+
+def inventariar(salida: str) -> None:
+    for linea in salida.splitlines():
+        m = re.search(r":(\d+)\s+(\S+)$", linea)
+        if m:
+            puerto, servicio = int(m.group(1)), m.group(2)
+            estado = "autorizado" if puerto in AUTORIZADOS else "⚠️ NO autorizado"
+            print(f"puerto {puerto:5} {servicio:10} {estado}")
+
+inventariar(SS)
 ```
 
 ```text title="Salida"
-{'10.0.20.5': 5}
-['10.0.20.5']
+puerto    22 sshd       autorizado
+puerto    80 nginx      autorizado
+puerto    23 telnetd    ⚠️ NO autorizado
+puerto  5432 postgres   ⚠️ NO autorizado
 ```
 
-### 5.1 ¿Y si además tuvo éxito? Ahí está el peligro real
+> El puerto **23 (Telnet)** manda las contraseñas **sin cifrar**: nunca debería estar abierto. El **5432 (PostgreSQL)** solo escucha en `127.0.0.1` (localhost), así que no es accesible desde fuera — menos grave, pero conviene saberlo. **Esto es el criterio 2.h:** inventariar y controlar los servicios que corren.
 
-```python title="acceso_tras_fuerza_bruta.py"
-def hubo_acceso_correcto(eventos: list[dict[str, str]], ip: str) -> bool:
-    return any(e["ip"] == ip and e["estado"] == "OK" for e in eventos)
+### 5.2 Un mini-IDS por reglas
 
-eventos = [
-    {"ip": "10.0.20.5", "estado": "FALLO"}, {"ip": "10.0.20.5", "estado": "FALLO"},
-    {"ip": "10.0.20.5", "estado": "OK"},     # ¡al final entró!
+Un **IDS** vigila el tráfico y lanza una alerta cuando algo encaja con una **regla** de ataque conocido. Herramientas reales como **Snort** o **Suricata** funcionan así, con miles de reglas. Montamos uno en pequeño.
+
+**Paso 2.** Crea `ids.py`:
+
+```python title="ids.py"
+REGLAS = [
+    ("backdoor Metasploit (puerto 4444)", lambda l: ":4444" in l),
+    ("acceso al fichero de contraseñas",  lambda l: "/etc/shadow" in l),
+    ("herramienta de ataque sqlmap",      lambda l: "sqlmap" in l.lower()),
 ]
-print(hubo_acceso_correcto(eventos, "10.0.20.5"))
+
+def detectar(linea: str) -> list[str]:
+    return [descripcion for descripcion, regla in REGLAS if regla(linea)]
+
+trafico = [
+    "GET /index.html",
+    "conexion a 10.0.0.5:4444",
+    "cat /etc/shadow",
+    'GET / User-Agent: sqlmap/1.7',
+]
+for linea in trafico:
+    alertas = detectar(linea)
+    marca = "🚨 " + "; ".join(alertas) if alertas else "ok"
+    print(f"{linea[:32]:34} {marca}")
 ```
 
 ```text title="Salida"
-True
+GET /index.html                    ok
+conexion a 10.0.0.5:4444           🚨 backdoor Metasploit (puerto 4444)
+cat /etc/shadow                    🚨 acceso al fichero de contraseñas
+GET / User-Agent: sqlmap/1.7       🚨 herramienta de ataque sqlmap
 ```
 
-!!! analogia "Analogía"
-    Una IP con 50 fallos y **sin ningún éxito** es ruidosa pero no crítica: el atacante no ha entrado (todavía). Una IP con 5 fallos **seguidos de un OK** es la alarma roja: probablemente acertó la contraseña. Ese matiz es lo que separa una alerta informativa de una crítica.
+> Hay dos tipos de IDS: **NIDS** (vigila la *red*, como Snort) y **HIDS** (vigila un *equipo* concreto, como tus ficheros). El tuyo, leyendo líneas de tráfico, es un NIDS en miniatura. **Esto es el criterio 2.i.**
 
-!!! reto "Reto rápido 3"
-    Con los eventos de arriba, ¿cuántos fallos tuvo `10.0.20.5` antes del `OK`? Escribe una función `fallos_antes_de_ok(eventos, ip) -> int`.
+!!! tip "Billete de salida del Lab 5"
+    ¿Qué diferencia un **IDS** (detecta y avisa) de un **IPS** (detecta y además bloquea)? ¿Y un cortafuegos de un IDS?
 
 ---
 
-## 6. Monitorización y SIEM
+## Lab 6 · Seguridad de redes wifi (CE 2.g)
 
-Un **SIEM** (*Security Information and Event Management*) centraliza los logs de toda una organización, los correla en tiempo real y dispara alertas — es, a escala industrial, exactamente lo que acabas de programar a mano: parsear, contar, detectar umbral.
+**Objetivo:** entender por qué unas wifis son seguras y otras no, evaluando el **protocolo de cifrado** que usan. No vamos a atacar ninguna red (sería ilegal): vamos a **evaluar** redes a partir de sus datos, como hace cualquier auditor.
 
-```mermaid
-flowchart LR
-    S1["Servidor web"] --> C["Recolector<br/>de logs"]
-    S2["Firewall"] --> C
-    S3["Servidor SSH"] --> C
-    C --> Co["Correlación<br/>de eventos"]
-    Co --> Al["Alerta"]
-```
+Los protocolos de seguridad wifi, de peor a mejor:
 
-| Herramienta real | Qué hace |
-|---|---|
-| Wazuh, Splunk, ELK | SIEM: centraliza, correla, alerta |
-| `fail2ban` | Bloquea IPs tras N fallos (la misma lógica que tu detector) |
-| Suricata | Detección de intrusiones por firma de tráfico |
-
----
-
-## 7. Errores frecuentes (ten esto a mano)
-
-| Error | Causa | Solución |
+| Protocolo | Estado | Por qué |
 |---|---|---|
-| `TypeError: 'NoneType' object is not subscriptable` | Usar `m["campo"]` sin comprobar `if m:` | Comprueba siempre antes |
-| El patrón no encaja nunca | Espacios reales vs `\s`, o mayúsculas | Prueba con `re.search` en un REPL antes de automatizar |
-| `re.match` no encuentra algo que sí está en la línea | `match` solo mira el **principio** de la cadena | Usa `search` salvo que quieras anclar al inicio |
-| El contador da de más | Contar también los `OK` | Filtra por `estado == "FALLO"` antes de contar |
-| Falsos positivos con IPs internas | No distinguir tráfico interno de externo | Usa `ipaddress.ip_address(ip).is_private` |
+| **Abierta** (sin clave) | ☠️ Peligrosa | Cualquiera lee tu tráfico |
+| **WEP** | ☠️ Roto | Se rompe en minutos, de 2001 |
+| **WPA** | ⚠️ Débil | Obsoleto |
+| **WPA2** | ✅ Aceptable | El estándar durante años |
+| **WPA3** | ✅ Recomendado | El más moderno |
+
+**Paso 1.** Crea `auditor_wifi.py`. Evalúa una lista de redes (como las que ves al conectarte) y puntúa su seguridad:
+
+```python title="auditor_wifi.py"
+NIVEL = {"abierta": 0, "WEP": 1, "WPA": 2, "WPA2": 4, "WPA3": 5}
+
+def evaluar(red: dict) -> str:
+    puntos = NIVEL.get(red["seguridad"], 0)
+    if puntos <= 1:
+        return "☠️ EVITAR"
+    if puntos <= 2:
+        return "⚠️ DÉBIL"
+    return "✅ OK"
+
+redes = [
+    {"nombre": "WiFi_Cafe_Gratis", "seguridad": "abierta"},
+    {"nombre": "MOVISTAR_1234",     "seguridad": "WEP"},
+    {"nombre": "casa_ana",          "seguridad": "WPA2"},
+    {"nombre": "oficina_5G",        "seguridad": "WPA3"},
+]
+for red in redes:
+    print(f"{red['nombre']:20} {red['seguridad']:8} {evaluar(red)}")
+```
+
+```text title="Salida"
+WiFi_Cafe_Gratis     abierta  ☠️ EVITAR
+MOVISTAR_1234        WEP      ☠️ EVITAR
+casa_ana             WPA2     ✅ OK
+oficina_5G           WPA3     ✅ OK
+```
+
+**Paso 2 (reflexión).** Una wifi **abierta** de cafetería no cifra nada: cualquiera en el local puede leer lo que envías. ¿Significa que no puedes usarla? No, si **tú** cifras por encima: cuando entras en una web `https://`, tu tráfico va cifrado de extremo a extremo (es el cifrado de la UT1 en acción), aunque la wifi sea abierta. Por eso el candado de HTTPS es tu salvavidas en redes públicas.
+
+!!! tip "Billete de salida del Lab 6"
+    ¿Por qué WEP se considera "roto" y no solo "débil"? ¿Qué puedes hacer para navegar con cierta seguridad en una wifi abierta?
 
 ---
 
-## 8. Actividades: de lo más sencillo a preguntas tipo examen
+## 🎯 Reto práctico (para que lo montes tú)
 
-> Una única escalera. Intenta cada uno antes de mirar la solución. Librerías reales: `re`, `collections.Counter`, `ipaddress`.
+Has montado seis laboratorios por separado. Ahora júntalos en una sola herramienta: un **centinela** que lee el registro de un servidor y saca un informe de seguridad.
 
-**1 · 🟢 Extraer IPs de un texto** — `ips(texto: str) -> list[str]`.
-<details class="sol"><summary>Solución</summary>
+**Qué tiene que hacer `centinela.py`:** leer un log como este y producir un informe con (1) los fallos de acceso por IP, (2) las IPs **críticas** —las que fallaron 3 veces o más **y luego** consiguieron entrar— y (3) las alertas del IDS (conexiones al puerto 4444).
 
-```python
-import re
-def ips(texto: str) -> list[str]:
-    return re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", texto)
+```python title="log de ejemplo para probar"
+LOG = """\
+10:00 198.51.100.7 escaneo de puertos
+10:01 198.51.100.7 intento ssh usuario=admin FALLO
+10:02 198.51.100.7 intento ssh usuario=admin FALLO
+10:03 198.51.100.7 intento ssh usuario=admin FALLO
+10:04 192.168.1.50 GET /index.html
+10:05 198.51.100.7 intento ssh usuario=admin OK
+10:06 198.51.100.7 descarga /tmp/shell.sh
+10:07 198.51.100.7 conexion saliente a 203.0.113.9:4444"""
 ```
-</details>
 
-**2 · 🟢 ¿Es una IP privada?** — `es_privada(ip: str) -> bool` con `ipaddress`.
-<details class="sol"><summary>Solución</summary>
+**Salida que debes conseguir:**
 
-```python
-import ipaddress
-def es_privada(ip: str) -> bool:
-    return ipaddress.ip_address(ip).is_private
+```text
+Fallos por IP: {'198.51.100.7': 3}
+IPs críticas (fuerza bruta + acceso): ['198.51.100.7']
+Alertas IDS: ['198.51.100.7: posible backdoor (puerto 4444)']
 ```
-</details>
 
-**3 · 🟢 Parsear un evento** — `parsear_evento(linea) -> dict[str,str] | None` (usa el patrón de §3.1).
-<details class="sol"><summary>Solución</summary>
+**Pistas:**
 
-```python
-import re
-_P = re.compile(r"usuario=(?P<usuario>\S+)\s+ip=(?P<ip>\S+)\s+estado=(?P<estado>OK|FALLO)")
-def parsear_evento(linea: str) -> dict[str, str] | None:
-    m = _P.search(linea)
-    return m.groupdict() if m else None
-```
-</details>
+- Extrae la IP de cada línea con una expresión regular (`\d+\.\d+\.\d+\.\d+`), como en la UT... bueno, como aprenderás a hacer con `re`.
+- Cuenta los `FALLO` por IP con `collections.Counter`.
+- Guarda en un conjunto las IPs que tienen una línea con `OK`.
+- Una IP es **crítica** si está en los dos sitios: muchos fallos **y** un acceso correcto.
+- Para el IDS, busca `":4444"` en la línea.
 
-**4 · 🟢 Clasificar malware** — `clasifica(comportamiento: str) -> str` (usa el diccionario de §1).
-<details class="sol"><summary>Solución</summary>
+**Si te sobra tiempo:** añade que detecte también la **fase** de cada línea (Lab 3) y que marque el puerto `23` si aparece (Lab 5).
 
-```python
-MAPA = {"autorreplica_por_red": "gusano", "cifra_y_pide_rescate": "ransomware"}
-def clasifica(c: str) -> str:
-    return MAPA.get(c, "desconocido")
-```
-</details>
-
-**5 · 🟡 Contar códigos de estado HTTP** — `codigos(lineas: list[str]) -> Counter`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-import re
-from collections import Counter
-def codigos(lineas: list[str]) -> "Counter[str]":
-    c: Counter[str] = Counter()
-    for ln in lineas:
-        m = re.search(r'"\s+(\d{3})\b', ln)
-        if m:
-            c[m.group(1)] += 1
-    return c
-```
-</details>
-
-**6 · 🟡 Parsear el log completo** — `parsear_log(texto: str) -> list[dict[str,str]]`, descartando líneas corruptas.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def parsear_log(texto: str) -> list[dict[str, str]]:
-    eventos = []
-    for ln in texto.splitlines():
-        e = parsear_evento(ln)
-        if e is not None:
-            eventos.append(e)
-    return eventos
-```
-</details>
-
-**7 · 🟡 Fallos por IP** — `contar_fallos_por_ip(eventos) -> dict[str,int]`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from collections import Counter
-def contar_fallos_por_ip(eventos: list[dict[str, str]]) -> dict[str, int]:
-    c: Counter[str] = Counter()
-    for e in eventos:
-        if e["estado"] == "FALLO":
-            c[e["ip"]] += 1
-    return dict(c)
-```
-</details>
-
-**8 · 🟡 Top de IPs más ruidosas** — `top_ips(eventos, n=3) -> list[tuple[str,int]]`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from collections import Counter
-def top_ips(eventos: list[dict[str, str]], n: int = 3) -> list[tuple[str, int]]:
-    c: Counter[str] = Counter(e["ip"] for e in eventos if e["estado"] == "FALLO")
-    return c.most_common(n)
-```
-</details>
-
-**9 · 🟠 IPs sospechosas por umbral** — `ips_sospechosas(eventos, umbral=5) -> list[str]`, ordenadas de más a menos fallos.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def ips_sospechosas(eventos: list[dict[str, str]], umbral: int = 5) -> list[str]:
-    fallos = contar_fallos_por_ip(eventos)
-    return sorted([ip for ip, n in fallos.items() if n >= umbral], key=lambda ip: -fallos[ip])
-```
-</details>
-
-**10 · 🟠 ¿Hubo acceso tras los fallos?** — `hubo_acceso_correcto(eventos, ip) -> bool`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def hubo_acceso_correcto(eventos: list[dict[str, str]], ip: str) -> bool:
-    return any(e["ip"] == ip and e["estado"] == "OK" for e in eventos)
-```
-</details>
-
-**11 · 🟠 Usuarios objetivo de una IP** — `usuarios_objetivo(eventos, ip) -> set[str]`: qué usuarios ha probado esa IP.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def usuarios_objetivo(eventos: list[dict[str, str]], ip: str) -> set[str]:
-    return {e["usuario"] for e in eventos if e["ip"] == ip}
-```
-</details>
-
-**12 · 🔴 Password spraying** — `spraying(eventos, min_usuarios=5) -> list[str]`: IPs que prueban **pocas** contraseñas contra **muchos** usuarios distintos (al revés que la fuerza bruta clásica).
-<details class="sol"><summary>Solución</summary>
-
-```python
-from collections import defaultdict
-def spraying(eventos: list[dict[str, str]], min_usuarios: int = 5) -> list[str]:
-    usuarios_por_ip: dict[str, set[str]] = defaultdict(set)
-    for e in eventos:
-        if e["estado"] == "FALLO":
-            usuarios_por_ip[e["ip"]].add(e["usuario"])
-    return sorted(ip for ip, us in usuarios_por_ip.items() if len(us) >= min_usuarios)
-```
-</details>
-
-**13 · 🔴 Ventana temporal** — `en_ventana(marcas: list[int], segundos: int) -> int`: el máximo de eventos que caen en cualquier ventana deslizante de `segundos` (marcas ordenadas, en segundos desde el inicio).
-<details class="sol"><summary>Solución</summary>
-
-```python
-def en_ventana(marcas: list[int], segundos: int) -> int:
-    mejor = i = 0
-    for j in range(len(marcas)):
-        while marcas[j] - marcas[i] > segundos:
-            i += 1
-        mejor = max(mejor, j - i + 1)
-    return mejor
-```
-</details>
-
-**14 · 🔴 Escaneo de rutas 404** — `escaneo_web(lineas, umbral=10) -> list[str]`: IP que pide muchas rutas **distintas** con 404 (fuzzing de directorios).
-<details class="sol"><summary>Solución</summary>
-
-```python
-import re
-from collections import defaultdict
-def escaneo_web(lineas: list[str], umbral: int = 10) -> list[str]:
-    rutas: dict[str, set[str]] = defaultdict(set)
-    for ln in lineas:
-        m = re.search(r'(\d{1,3}(?:\.\d{1,3}){3}).*"(?:GET|POST)\s+(\S+)[^"]*"\s+404', ln)
-        if m:
-            rutas[m.group(1)].add(m.group(2))
-    return sorted(ip for ip, r in rutas.items() if len(r) >= umbral)
-```
-</details>
-
-**15 · 🔴 Informe final** — `informe(eventos, umbral=5) -> list[str]`: una línea por IP sospechosa con fallos y si hubo acceso, ordenado por gravedad.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def informe(eventos: list[dict[str, str]], umbral: int = 5) -> list[str]:
-    salida = []
-    for ip in ips_sospechosas(eventos, umbral):
-        fallos = contar_fallos_por_ip(eventos)[ip]
-        critico = hubo_acceso_correcto(eventos, ip)
-        etiqueta = "CRÍTICO" if critico else "alerta"
-        salida.append(f"[{etiqueta}] {ip}: {fallos} fallos" + (" + ACCESO" if critico else ""))
-    return sorted(salida, key=lambda s: "CRÍTICO" not in s)
-```
-</details>
+> Este reto es solo para practicar: **no se entrega ni puntúa**. Pero si lo resuelves, el simulacro te va a resultar fácil.
 
 ---
 
-## 9. Reto resuelto, paso a paso — Detector de fuerza bruta profesional
+## Resumen de la unidad
 
-Sigues en la consultora. Esta vez te llega un log de SSH de un cliente con la sospecha de que alguien está intentando entrar por fuerza bruta. Construyes la herramienta que lo confirma.
-
-```mermaid
-flowchart LR
-    L["log.txt"] --> P["parsear_log"]
-    P --> Ev["lista de eventos"]
-    Ev --> D["detectar"]
-    D --> Inf["informe:<br/>IP · fallos · ¿acceso?"]
-```
-
-**Paso 1 — El patrón y el parseo de una línea.**
-
-```python title="detector.py"
-import re
-
-PATRON = re.compile(
-    r"usuario=(?P<usuario>\S+)\s+ip=(?P<ip>\S+)\s+estado=(?P<estado>OK|FALLO)"
-)
-
-def parsear_evento(linea: str) -> dict[str, str] | None:
-    m = PATRON.search(linea)
-    return m.groupdict() if m else None
-```
-
-**Paso 2 — Parsear el fichero completo, sobreviviendo a la basura.**
-
-```python title="detector.py (continúa)"
-def parsear_log(texto: str) -> list[dict[str, str]]:
-    return [e for ln in texto.splitlines() if (e := parsear_evento(ln)) is not None]
-```
-
-**Paso 3 — Contar y detectar el umbral.**
-
-```python title="detector.py (continúa)"
-from collections import Counter
-
-def contar_fallos_por_ip(eventos: list[dict[str, str]]) -> dict[str, int]:
-    c: Counter[str] = Counter(e["ip"] for e in eventos if e["estado"] == "FALLO")
-    return dict(c)
-
-def ips_sospechosas(eventos: list[dict[str, str]], umbral: int) -> list[str]:
-    fallos = contar_fallos_por_ip(eventos)
-    return sorted([ip for ip, n in fallos.items() if n >= umbral], key=lambda ip: -fallos[ip])
-
-def hubo_acceso_correcto(eventos: list[dict[str, str]], ip: str) -> bool:
-    return any(e["ip"] == ip and e["estado"] == "OK" for e in eventos)
-```
-
-**Paso 4 — El informe, con severidad.**
-
-```python title="detector.py (continúa)"
-def generar_informe(eventos: list[dict[str, str]], umbral: int) -> list[str]:
-    lineas = []
-    fallos = contar_fallos_por_ip(eventos)
-    for ip in ips_sospechosas(eventos, umbral):
-        critico = hubo_acceso_correcto(eventos, ip)
-        etiqueta = "CRÍTICO (acceso logrado)" if critico else "alerta"
-        lineas.append(f"[{etiqueta:24}] {ip}  ({fallos[ip]} fallos)")
-    return lineas
-```
-
-**Paso 5 — CLI con `argparse`.**
-
-```python title="detector.py (continúa)"
-import argparse
-from pathlib import Path
-
-def main() -> None:
-    ap = argparse.ArgumentParser(prog="detector", description="Detector de fuerza bruta en logs SSH")
-    ap.add_argument("log", type=Path, help="fichero de log a analizar")
-    ap.add_argument("--umbral", type=int, default=5, help="fallos mínimos para alertar")
-    args = ap.parse_args()
-
-    eventos = parsear_log(args.log.read_text(encoding="utf-8"))
-    print(f"{len(eventos)} eventos analizados")
-    for linea in generar_informe(eventos, args.umbral):
-        print(linea)
-
-if __name__ == "__main__":
-    main()
-```
-
-**Paso 6 — Pruébalo con Docker: genera el log y analízalo, sin `sudo`.**
-
-```yaml title="docker-compose.yml"
-services:
-  demo:
-    image: python:3.12-alpine
-    volumes: ["./datos:/datos", "./detector.py:/detector.py"]
-    working_dir: /datos
-    command: >
-      sh -c "python3 -c \"
-      lineas = ['2026-05-01 sshd usuario=root ip=10.0.20.5 estado=FALLO'] * 6
-      lineas += ['2026-05-01 sshd usuario=root ip=10.0.20.5 estado=OK']
-      lineas += ['2026-05-01 sshd usuario=ana ip=10.0.20.9 estado=OK']
-      open('log.txt','w').write(chr(10).join(lineas))
-      \";
-      python /detector.py log.txt --umbral 5"
-```
-
-```bash title="Ejecutar"
-mkdir -p datos && docker compose run --rm demo
-```
-
-```text title="Salida esperada"
-8 eventos analizados
-[CRÍTICO (acceso logrado)] 10.0.20.5  (6 fallos)
-```
-
-<details class="sol"><summary>📄 detector.py completo</summary>
-
-```python
-import argparse, re
-from collections import Counter
-from pathlib import Path
-
-PATRON = re.compile(r"usuario=(?P<usuario>\S+)\s+ip=(?P<ip>\S+)\s+estado=(?P<estado>OK|FALLO)")
-
-def parsear_evento(linea: str) -> dict[str, str] | None:
-    m = PATRON.search(linea)
-    return m.groupdict() if m else None
-
-def parsear_log(texto: str) -> list[dict[str, str]]:
-    return [e for ln in texto.splitlines() if (e := parsear_evento(ln)) is not None]
-
-def contar_fallos_por_ip(eventos: list[dict[str, str]]) -> dict[str, int]:
-    return dict(Counter(e["ip"] for e in eventos if e["estado"] == "FALLO"))
-
-def ips_sospechosas(eventos: list[dict[str, str]], umbral: int) -> list[str]:
-    fallos = contar_fallos_por_ip(eventos)
-    return sorted([ip for ip, n in fallos.items() if n >= umbral], key=lambda ip: -fallos[ip])
-
-def hubo_acceso_correcto(eventos: list[dict[str, str]], ip: str) -> bool:
-    return any(e["ip"] == ip and e["estado"] == "OK" for e in eventos)
-
-def generar_informe(eventos: list[dict[str, str]], umbral: int) -> list[str]:
-    fallos = contar_fallos_por_ip(eventos)
-    out = []
-    for ip in ips_sospechosas(eventos, umbral):
-        etiqueta = "CRÍTICO (acceso logrado)" if hubo_acceso_correcto(eventos, ip) else "alerta"
-        out.append(f"[{etiqueta:24}] {ip}  ({fallos[ip]} fallos)")
-    return out
-
-def main() -> None:
-    ap = argparse.ArgumentParser(prog="detector", description="Detector de fuerza bruta en logs SSH")
-    ap.add_argument("log", type=Path)
-    ap.add_argument("--umbral", type=int, default=5)
-    args = ap.parse_args()
-    eventos = parsear_log(args.log.read_text(encoding="utf-8"))
-    print(f"{len(eventos)} eventos analizados")
-    for linea in generar_informe(eventos, args.umbral):
-        print(linea)
-
-if __name__ == "__main__":
-    main()
-```
-</details>
-
----
-
-## 10. Reto para ti (propuesto, sin solución)
-
-### 📡 Mini-SIEM en dos contenedores
-
-Un SIEM de verdad no analiza un fichero estático: vigila **en vivo**. Vas a montar una versión mínima.
-
-```mermaid
-flowchart LR
-    subgraph "Contenedor: generador"
-    G["escribe una línea<br/>de log cada segundo"]
-    end
-    subgraph "Contenedor: monitor (tu código)"
-    T["sigue el fichero<br/>en vivo (tail)"] --> An["analiza la<br/>ventana de 60s"]
-    An -->|umbral superado| Al["alerta"]
-    end
-    G -.->|volumen compartido| T
-```
-
-**Objetivo.** Un contenedor **genera** un log de accesos web en streaming (una línea nueva cada segundo, con IPs variadas y códigos 200/404). **Otro contenedor** con tu Python **sigue el fichero en vivo** y alerta cuando una IP supera **10 respuestas 404 en una ventana de 60 segundos**.
-
-**Requisitos**
-
-- CLI con `argparse`: `python monitor.py <fichero> --ventana 60 --umbral 10`.
-- "Seguir en vivo" un fichero que crece: abre el fichero, ve a leer lo que se añada (patrón `tail -f`: recuerda la posición leída y relee desde ahí).
-- Reutiliza tus funciones de parseo y de ventana temporal (ejercicio 13) del apartado anterior.
-- Código tipado, `mypy` limpio.
-- Nada de `sudo`: todo en `docker compose up`.
-
-**Criterios de aceptación**
-
-1. El monitor no se bloquea esperando: lee lo nuevo y vuelve a dormir un poco si no hay líneas.
-2. Alerta como máximo **una vez** por IP mientras siga en la ventana (no una alerta por cada línea nueva).
-3. Si paras el generador, el monitor no falla: simplemente no hay líneas nuevas.
-
-**Pistas** (no solución): para leer solo lo nuevo, guarda la posición con `f.tell()` tras cada lectura y reabre con `f.seek(posicion)` · para la ventana de 60 s reutiliza la idea de "ventana deslizante" del ejercicio 13, pero con marcas de tiempo reales (`time.time()`) en vez de índices.
-
-**Si te sobra tiempo:** añade detección de **password spraying** (ejercicio 12) en el mismo monitor · exporta las alertas a un CSV con `csv.writer` · añade un modo `--formato json` que saque cada alerta como una línea JSON (`import json`).
-
-> Esto es justo el tipo de reto que resolverás en el **test práctico**.
-
----
+| Criterio | Idea para el test |
+|---|---|
+| 2.a Tipos de malware | Virus (necesita abrirse), gusano (se propaga solo), troyano (se disfraza), ransomware (cifra y extorsiona), spyware (espía), rootkit (se esconde) |
+| 2.b Origen y actualización | Verifica el **checksum** publicado; mantén todo **actualizado** (lo viejo tiene fallos públicos) |
+| 2.c Anatomía del ataque | Fases: reconocimiento → acceso → persistencia → exfiltración/C2 |
+| 2.d Analizar malware | En entorno **controlado**, sin ejecutarlo; por **firma** (hash) |
+| 2.e Antivirus | Herramientas como **ClamAV** detectan (firma) y eliminan; `FOUND` = amenaza |
+| 2.f Cripto en redes | Ya en la UT1: cifrado, firma y certificados protegen el tráfico (HTTPS) |
+| 2.g Wifi | Abierta/WEP = evitar · WPA2/WPA3 = ok · en wifi abierta, confía en HTTPS |
+| 2.h Servicios de red | **Inventaría** lo que escucha (`ss -tlnp`); cierra lo que no se use (ej. Telnet/23) |
+| 2.i IDS | Detecta intrusiones por reglas; **NIDS** (red, como Snort) vs **HIDS** (equipo) |
 
 ## Autoevaluación rápida (conceptos)
 
-<details><summary>1. ¿Qué diferencia a un virus de un gusano?</summary>El virus necesita un fichero hospedador; el gusano se replica solo por la red.</details>
-<details><summary>2. ¿Qué devuelve <code>re.search</code> si no encuentra el patrón?</summary><code>None</code>.</details>
-<details><summary>3. ¿Cómo se accede a un grupo con nombre en un match?</summary>Con <code>m["nombre"]</code> o <code>m.group("nombre")</code>.</details>
-<details><summary>4. ¿Qué hace un SIEM?</summary>Centraliza logs de muchas fuentes, los correla y dispara alertas.</details>
-<details><summary>5. ¿Por qué es peligrosa una IP con fallos seguidos de un <code>OK</code>?</summary>Porque probablemente acertó la contraseña tras varios intentos.</details>
+<details><summary>1. ¿Por qué un gusano es más peligroso en una red que un troyano?</summary>El gusano se propaga solo de equipo a equipo; el troyano necesita que alguien lo instale.</details>
+<details><summary>2. ¿Cómo detecta un antivirus un virus sin ejecutarlo?</summary>Por su firma: compara el hash del fichero con su base de datos de amenazas.</details>
+<details><summary>3. ¿Por qué cambiar un byte de un virus lo hace invisible a la detección por firma?</summary>Porque cambia su hash, así que ya no coincide con la firma guardada. Por eso se usa también análisis de comportamiento.</details>
+<details><summary>4. ¿Qué servicio de red nunca deberías dejar abierto y por qué?</summary>Telnet (puerto 23): envía las contraseñas sin cifrar.</details>
+<details><summary>5. ¿Qué diferencia hay entre un IDS y un IPS?</summary>El IDS detecta y avisa; el IPS además bloquea el ataque.</details>
+<details><summary>6. En una wifi abierta de una cafetería, ¿cómo navegas con cierta seguridad?</summary>Usando webs HTTPS: tu tráfico va cifrado de extremo a extremo aunque la wifi no cifre nada.</details>
 
 ## Glosario
 
 | Término | Definición |
 |---|---|
-| **Malware** | Software diseñado para dañar, robar o tomar el control sin permiso. |
-| **Fuerza bruta** | Ataque que prueba credenciales de forma sistemática hasta acertar. |
-| **Password spraying** | Variante: pocas contraseñas contra muchos usuarios, para evitar bloqueos. |
-| **Grupo con nombre** | `(?P<nombre>...)` en una regex; se accede como diccionario. |
-| **SIEM** | Sistema que centraliza y correla eventos de seguridad de toda una organización. |
-| **`fail2ban`** | Herramienta real que bloquea IPs tras N fallos — la misma lógica que este reto. |
+| **Malware** | Software malicioso: virus, gusano, troyano, ransomware, spyware, rootkit. |
+| **Firma (antivirus)** | Hash de un fichero malicioso conocido, usado para detectarlo. |
+| **EICAR** | Fichero de prueba inofensivo que todos los antivirus detectan como "virus". |
+| **Checksum** | Hash publicado por el fabricante para verificar que una descarga no se ha manipulado. |
+| **CVE** | Identificador público de una vulnerabilidad conocida. |
+| **Kill chain** | Las fases de un ataque, de reconocimiento a exfiltración. |
+| **ClamAV** | Antivirus libre, muy usado en servidores Linux. |
+| **IDS / IPS** | Detecta intrusiones y avisa / detecta y además bloquea. |
+| **NIDS / HIDS** | IDS que vigila la red / IDS que vigila un equipo concreto. |
+| **WPA2 / WPA3** | Protocolos de cifrado wifi seguros (WEP y "abierta" no lo son). |
 
 ## Cómo se evalúa esta unidad (RA2)
 
-El instrumento principal es un **test práctico**: resuelves en Python un reto parecido al de esta unidad y se corrige **solo con su batería de tests** (queda abierto, como complemento, algún ejercicio práctico).
+La UD1 y la UD2 forman el **1.er trimestre**, que se evalúa con un **examen tipo test** (preguntas de 4 opciones como las del simulacro).
 
-!!! reto "La nota, sin sorpresas"
-    **Nota = (tests superados ÷ total) × 10.** Se aprueba con 5.
+!!! tip "La nota, sin sorpresas"
+    **Nota = (aciertos ÷ nº de preguntas) × 10.** Los fallos no restan. Se aprueba con 5.
 
-El informe además te marca, **sin puntuar**, tres buenas prácticas: usar la técnica del RA (aquí, `re`), pasar `mypy` y documentar el código.
-
----
+Los laboratorios y el reto **no puntúan**: son tu entrenamiento. Si haces el simulacro sin mirar y sacas más de 14 de 20, vas bien.
 
 ## Simulacro de examen tipo test
 
-> 15 preguntas de opción múltiple. Cada una trae su propio código.
+> 20 preguntas de opción múltiple sobre toda la unidad. Hazlo como si fuera el examen: sin mirar, y al final corrige.
 
-**1.** ¿Qué imprime este código?
+**1.** Un malware se copia solo de un ordenador a otro por la red, sin que nadie abra nada. ¿Qué familia es?
 
-```python
-MAPA = {
-    "cifra_y_pide_rescate": "ransomware",
-    "autorreplica_por_red": "gusano",
-    "roba_datos_en_silencio": "spyware",
-}
+A) Virus
+B) Troyano
+C) Gusano
+D) Spyware
 
-def clasifica(c: str) -> str:
-    return MAPA.get(c, "desconocido")
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: C.</b> El gusano se propaga solo por la red; el virus necesita que se ejecute un fichero y el troyano que alguien lo instale engañado.</details>
 
-print(clasifica("roba_datos_en_silencio"))
-print(clasifica("ataque_nuevo"))
-```
+**2.** Un programa que se hace pasar por un juego gratuito pero instala una puerta trasera es un…
 
-A) `spyware` y `desconocido`
-B) `desconocido` y `spyware`
-C) `spyware` y `None`
-D) Lanza `KeyError` en la segunda llamada
+A) Gusano
+B) Troyano
+C) Rootkit
+D) Adware
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> <code>dict.get(clave, valor_por_defecto)</code> devuelve el valor si la clave existe, y el valor por defecto (<code>"desconocido"</code>) si no — sin lanzar excepción.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> El troyano se disfraza de software legítimo para que lo instales tú mismo.</details>
 
-**2.** ¿Qué imprime este código?
+**3.** ¿Cómo detecta un antivirus un fichero malicioso **sin ejecutarlo**?
 
-```python
-import re
+A) Lo abre en una máquina virtual
+B) Compara su hash (firma) con una base de amenazas conocidas
+C) Mira su extensión
+D) Pregunta al usuario
 
-texto = "El servidor 10.0.5.9 recibió tráfico en el puerto 443 y en el puerto 8080"
-print(re.findall(r"puerto (\d+)", texto))
-```
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La detección por firma es comparar el hash del fichero con los de malware conocido.</details>
 
-A) `['puerto 443', 'puerto 8080']`
-B) `['443', '8080']`
-C) `['443']`
-D) `[]`
+**4.** ¿Cuál es el punto débil de la detección **por firma**?
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>findall</code> devuelve una lista con el contenido de los grupos capturados (lo que hay dentro del paréntesis), no del texto completo que coincide.</details>
+A) Es muy lenta
+B) Si el atacante cambia un byte, el hash cambia y ya no se reconoce
+C) Solo funciona en Windows
+D) Necesita conexión a internet
 
-**3.** ¿Qué imprime este código?
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Un cambio mínimo altera el hash; por eso se complementa con análisis de comportamiento (heurística).</details>
 
-```python
-import re
+**5.** El fichero **EICAR** sirve para…
 
-patron = re.compile(r"usuario=(?P<usuario>\S+)\s+intentos=(?P<intentos>\d+)")
-m = patron.search("log: usuario=marta intentos=7 hora=10:00")
-print(m["usuario"], m["intentos"])
-```
+A) Infectar un equipo de prueba
+B) Comprobar que un antivirus funciona, sin ningún riesgo
+C) Cifrar ficheros
+D) Borrar virus
 
-A) `marta 7`
-B) `usuario intentos`
-C) `None None`
-D) Lanza un error porque hay dos grupos con nombre
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Es un fichero inofensivo que todos los antivirus reconocen como "virus de prueba".</details>
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> Cada grupo con nombre se accede como una clave de diccionario sobre el objeto <code>match</code>.</details>
+**6.** Antes de instalar un programa descargado, ¿cómo compruebas que no lo han manipulado?
 
-**4.** ¿Qué ocurre al ejecutar este código?
+A) Comprobando que el antivirus no salta
+B) Comparando su hash con el checksum publicado por el fabricante
+C) Mirando el tamaño del fichero
+D) Ejecutándolo y viendo si funciona
+
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Si el hash de tu descarga coincide con el checksum oficial, el fichero es idéntico al original.</details>
+
+**7.** ¿Qué devuelve esta función?
 
 ```python
-import re
+def necesita_actualizar(instalada, ultima):
+    return [int(x) for x in instalada.split(".")] < [int(x) for x in ultima.split(".")]
 
-m = re.search(r"error=(\d+)", "todo correcto, sin fallos")
-print(m["error"])
+print(necesita_actualizar("2.9.0", "2.10.0"))
 ```
 
-A) Imprime una cadena vacía
-B) Imprime `None`
-C) Lanza `TypeError`, porque `m` es `None` y no se puede indexar
-D) Imprime `0`
+A) `True`
+B) `False`
+C) Error
+D) `2.10.0`
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: C.</b> Como el patrón no encaja, <code>re.search</code> devuelve <code>None</code>; intentar hacer <code>None["error"]</code> lanza <code>TypeError</code>. Por eso siempre hay que comprobar <code>if m:</code> antes de usar el resultado.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> Comparadas como listas de números, `[2,9,0] < [2,10,0]` es cierto (9 es menor que 10). Como texto fallaría, pero aquí son enteros.</details>
 
-**5.** ¿Qué imprime este código?
+**8.** ¿Por qué es peligroso un servidor con software desactualizado?
 
-```python
-import re
+A) Va más lento
+B) Sus fallos de seguridad ya son públicos y fáciles de explotar
+C) Ocupa más disco
+D) No es peligroso
 
-PATRON = re.compile(r"usuario=(?P<usuario>\S+)\s+ip=(?P<ip>\S+)\s+estado=(?P<estado>OK|FALLO)")
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Las vulnerabilidades conocidas (CVE) de versiones viejas están documentadas y hay exploits listos para usar.</details>
 
-def parsear_evento(linea: str) -> dict | None:
-    m = PATRON.search(linea)
-    return m.groupdict() if m else None
+**9.** Ordena las fases típicas de un ataque:
 
-def parsear_log(texto: str) -> list[dict]:
-    return [e for l in texto.splitlines() if (e := parsear_evento(l)) is not None]
+A) Acceso → Reconocimiento → Persistencia → Exfiltración
+B) Reconocimiento → Acceso → Persistencia → Exfiltración
+C) Persistencia → Acceso → Reconocimiento → Exfiltración
+D) Reconocimiento → Persistencia → Acceso → Exfiltración
 
-log = "usuario=x ip=1.1.1.1 estado=OK\n####corrupta####\nusuario=y ip=2.2.2.2 estado=FALLO\n"
-print(len(parsear_log(log)))
-```
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Primero se mira qué hay (reconocimiento), luego se entra (acceso), se asegura la entrada (persistencia) y finalmente se actúa (exfiltración/C2).</details>
 
-A) `3`
-B) `2`
-C) `1`
-D) Lanza una excepción al llegar a la línea corrupta
+**10.** En un log ves 6 intentos de login `FALLO` seguidos desde la misma IP. ¿En qué fase del ataque estás y qué contramedida corta el ataque ahí?
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La línea corrupta no encaja con el patrón, así que <code>parsear_evento</code> devuelve <code>None</code> y esa línea se descarta silenciosamente — el parser sobrevive.</details>
+A) Persistencia; reinstalar el sistema
+B) Intento de acceso; limitar/bloquear tras N fallos
+C) Exfiltración; apagar la red
+D) Reconocimiento; cambiar la IP del servidor
 
-**6.** ¿Qué imprime este código?
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Son intentos de acceso (fuerza bruta); bloquear la IP tras varios fallos (como hace fail2ban) corta el ataque antes del acceso.</details>
 
-```python
-from collections import Counter
+**11.** Al escanear un servidor con ClamAV ves `sospechoso.txt: Win.Test.EICAR_HDB-1 FOUND`. ¿Qué significa?
 
-eventos = [{"ip": "3.3.3.3", "estado": "FALLO"}] * 4 + [{"ip": "3.3.3.3", "estado": "OK"}] * 10
-c = Counter(e["ip"] for e in eventos if e["estado"] == "FALLO")
-print(dict(c))
-```
+A) El fichero está limpio
+B) ClamAV ha detectado una amenaza en ese fichero
+C) Hubo un error de escaneo
+D) El fichero no existe
 
-A) `{'3.3.3.3': 14}`
-B) `{'3.3.3.3': 4}`
-C) `{'3.3.3.3': 10}`
-D) `{}`
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> `FOUND` indica detección; el texto anterior es el nombre de la amenaza identificada.</details>
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> El generador solo produce las IPs cuyo evento tiene <code>estado == "FALLO"</code>; los 10 eventos <code>"OK"</code> ni se cuentan.</details>
+**12.** ¿Qué criterio del RA2 cubre el uso de ClamAV?
 
-**7.** ¿Qué imprime este código?
+A) Inventariar servicios de red
+B) Implantar aplicaciones para detectar y eliminar software malicioso
+C) Evaluar la seguridad wifi
+D) Verificar certificados digitales
 
-```python
-def hubo_acceso_correcto(eventos: list[dict], ip: str) -> bool:
-    return any(e["ip"] == ip and e["estado"] == "OK" for e in eventos)
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> ClamAV es una aplicación específica de detección y eliminación de malware (criterio 2.e).</details>
 
-eventos = [{"ip": "5.5.5.5", "estado": "FALLO"}] * 20
-print(hubo_acceso_correcto(eventos, "5.5.5.5"))
-```
-
-A) `True`, porque hay 20 intentos
-B) `False`, porque ningún evento tiene `estado == "OK"`
-C) Lanza `IndexError`
-D) `True`, porque la IP coincide 20 veces
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Por muchos fallos que haya, <code>any(...)</code> solo es <code>True</code> si <b>alguno</b> de los eventos tiene <code>estado == "OK"</code> — y aquí no hay ninguno.</details>
-
-**8.** ¿Qué imprime este código?
-
-```python
-import ipaddress
-
-print(ipaddress.ip_address("192.168.50.2").is_private)
-print(ipaddress.ip_address("93.184.216.34").is_private)
-```
-
-A) `True` y `True`
-B) `False` y `False`
-C) `True` y `False`
-D) `False` y `True`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: C.</b> <code>192.168.x.x</code> es un rango privado (RFC 1918); <code>93.184.216.34</code> es una IP pública real de Internet.</details>
-
-**9.** Tienes esta función de detección de *password spraying* (pocas contraseñas contra muchos usuarios):
-
-```python
-from collections import defaultdict
-
-def spraying(eventos: list[dict], min_usuarios: int = 3) -> list[str]:
-    usuarios_por_ip = defaultdict(set)
-    for e in eventos:
-        if e["estado"] == "FALLO":
-            usuarios_por_ip[e["ip"]].add(e["usuario"])
-    return sorted(ip for ip, us in usuarios_por_ip.items() if len(us) >= min_usuarios)
-
-eventos = [{"ip": "7.7.7.7", "usuario": f"u{i}", "estado": "FALLO"} for i in range(2)]
-print(spraying(eventos, min_usuarios=3))
-```
-
-A) `['7.7.7.7']`
-B) `[]`
-C) `['u0', 'u1']`
-D) Lanza `KeyError`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Solo hay 2 usuarios distintos probados desde <code>7.7.7.7</code>, y el umbral pide al menos 3 — no se marca como spraying.</details>
-
-**10.** ¿Qué imprime este código?
-
-```python
-def en_ventana(marcas: list[int], segundos: int) -> int:
-    mejor = i = 0
-    for j in range(len(marcas)):
-        while marcas[j] - marcas[i] > segundos:
-            i += 1
-        mejor = max(mejor, j - i + 1)
-    return mejor
-
-print(en_ventana([1, 2, 3, 20, 21], segundos=5))
-```
-
-A) `2`
-B) `3`
-C) `5`
-D) `1`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Las marcas 1, 2 y 3 caben todas en una ventana de 5 segundos (<code>3-1=2 ≤ 5</code>); al llegar a 20, las anteriores quedan fuera de rango. El máximo es 3.</details>
-
-**11.** ¿Qué imprime este código?
+**13.** ¿Qué hace este código?
 
 ```python
 import re
-from collections import Counter
-
-def codigos(lineas: list[str]) -> Counter:
-    c = Counter()
-    for l in lineas:
-        m = re.search(r'"\s+(\d{3})\b', l)
-        if m:
-            c[m.group(1)] += 1
-    return c
-
-lineas = ['1.1.1.1 "GET / HTTP/1.1" 200'] * 3 + ['1.1.1.1 "GET /a HTTP/1.1" 500']
-print(dict(codigos(lineas)))
+m = re.search(r":(\d+)\s+(\S+)$", "tcp LISTEN 0.0.0.0:23 telnetd")
+print(m.group(1), m.group(2))
 ```
 
-A) `{'200': 3, '500': 1}`
-B) `{'200': 1, '500': 1}`
-C) `{'200': 4}`
-D) `{}`
+A) `23 telnetd`
+B) `telnetd 23`
+C) `0.0.0.0 23`
+D) Error
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> El patrón extrae el código de 3 dígitos al final de cada línea; se cuentan las 3 apariciones de <code>200</code> y la 1 de <code>500</code> por separado.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> El primer grupo captura el puerto (`23`) y el segundo el servicio (`telnetd`).</details>
 
-**12.** ¿Qué diferencia hay en el comportamiento de estas dos líneas con `linea = "sshd usuario=root ip=1.2.3.4"` (que **no** empieza por la fecha, como en un log real)?
+**14.** ¿Por qué el puerto **23 (Telnet)** no debería estar abierto?
+
+A) Es muy lento
+B) Envía las contraseñas sin cifrar
+C) Solo funciona en Windows
+D) Consume mucha memoria
+
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Telnet transmite todo en claro, incluidas las credenciales; su sustituto seguro es SSH (puerto 22).</details>
+
+**15.** ¿Por qué conviene **inventariar** los servicios de red que escuchan en un sistema?
+
+A) Para que vaya más rápido
+B) No puedes proteger ni cerrar lo que no sabes que está abierto
+C) Para ahorrar electricidad
+D) Es obligatorio por ley
+
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Conocer la superficie de ataque (qué puertas hay abiertas) es el primer paso para reducirla.</details>
+
+**16.** Un **IDS** y un **IPS** se diferencian en que…
+
+A) El IDS es más caro
+B) El IDS detecta y avisa; el IPS además bloquea el ataque
+C) El IPS solo funciona en la nube
+D) Son lo mismo
+
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Detección (IDS) frente a detección + prevención/bloqueo (IPS).</details>
+
+**17.** ¿Qué diferencia a un **NIDS** de un **HIDS**?
+
+A) El NIDS vigila la red; el HIDS vigila un equipo concreto
+B) El NIDS es para Windows y el HIDS para Linux
+C) El NIDS es un antivirus
+D) No hay diferencia
+
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> NIDS (Network, como Snort/Suricata) vigila el tráfico de red; HIDS vigila los ficheros y la actividad de un host.</details>
+
+**18.** ¿Cuál de estas redes wifi es la **más insegura**?
+
+A) WPA3
+B) WPA2
+C) WEP
+D) Una red con contraseña larga y WPA2
+
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: C.</b> WEP está roto desde hace años y se descifra en minutos; WPA2 y WPA3 son seguros.</details>
+
+**19.** Estás en una wifi **abierta** de una cafetería. ¿Cómo proteges tu tráfico?
+
+A) No se puede, hay que desconectarse
+B) Usando webs HTTPS, que cifran de extremo a extremo
+C) Poniéndole contraseña a la wifi
+D) Apagando el bluetooth
+
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Aunque la wifi no cifre, HTTPS protege tu tráfico de extremo a extremo (el cifrado de la UT1 en acción). Una VPN también valdría.</details>
+
+**20.** ¿Qué imprime `analizar(b"hola")` con esta base de firmas?
 
 ```python
-resultado_match = re.match(r"ip=", linea)
-resultado_search = re.search(r"ip=", linea)
+import hashlib
+FIRMAS = {"275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f": "EICAR"}
+
+def analizar(contenido):
+    return FIRMAS.get(hashlib.sha256(contenido).hexdigest(), "limpio")
+
+print(analizar(b"hola"))
 ```
 
-A) Ambas dan el mismo resultado, porque el patrón es idéntico
-B) `resultado_match` es `None` (el patrón no está al principio); `resultado_search` sí encuentra la coincidencia en cualquier parte
-C) `resultado_match` encuentra la coincidencia; `resultado_search` no
-D) Las dos lanzan una excepción porque falta `^` en el patrón
+A) `EICAR`
+B) `limpio`
+C) El hash de "hola"
+D) Error
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>match</code> solo comprueba si el patrón encaja justo al principio de la cadena; como la línea empieza por <code>"sshd..."</code>, no por <code>"ip="</code>, <code>match</code> falla. <code>search</code> sí lo encuentra, esté donde esté.</details>
-
-**13.** *(Sobre el reto de la unidad)* ¿Qué imprime este código?
-
-```python
-from collections import Counter
-
-def contar_fallos_por_ip(eventos: list[dict]) -> dict:
-    return dict(Counter(e["ip"] for e in eventos if e["estado"] == "FALLO"))
-
-def ips_sospechosas(eventos: list[dict], umbral: int) -> list[str]:
-    fallos = contar_fallos_por_ip(eventos)
-    return sorted([ip for ip, n in fallos.items() if n >= umbral], key=lambda ip: -fallos[ip])
-
-eventos = [{"ip": "9.9.9.9", "estado": "FALLO"}] * 3 + [{"ip": "8.8.8.8", "estado": "FALLO"}] * 7
-print(ips_sospechosas(eventos, umbral=5))
-```
-
-A) `['9.9.9.9', '8.8.8.8']`
-B) `['8.8.8.8']`
-C) `['8.8.8.8', '9.9.9.9']`
-D) `[]`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>9.9.9.9</code> solo tiene 3 fallos, por debajo del umbral de 5; <code>8.8.8.8</code> tiene 7, así que supera el umbral y es la única IP sospechosa.</details>
-
-**14.** *(Sobre el reto de la unidad)* Con las funciones `contar_fallos_por_ip`, `ips_sospechosas` y `hubo_acceso_correcto` ya definidas, ¿qué imprime esto?
-
-```python
-def generar_informe(eventos: list[dict], umbral: int) -> list[str]:
-    fallos = contar_fallos_por_ip(eventos)
-    out = []
-    for ip in ips_sospechosas(eventos, umbral):
-        etiqueta = "CRÍTICO" if hubo_acceso_correcto(eventos, ip) else "alerta"
-        out.append(f"[{etiqueta}] {ip} ({fallos[ip]} fallos)")
-    return out
-
-eventos = [{"ip": "9.9.9.9", "estado": "FALLO"}] * 6 + [{"ip": "9.9.9.9", "estado": "OK"}]
-print(generar_informe(eventos, umbral=5))
-```
-
-A) `['[alerta] 9.9.9.9 (6 fallos)']`
-B) `['[CRÍTICO] 9.9.9.9 (6 fallos)']`
-C) `['[CRÍTICO] 9.9.9.9 (7 fallos)']`
-D) `[]`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>9.9.9.9</code> tiene 6 fallos (supera el umbral de 5) <b>y además</b> un <code>OK</code> posterior — <code>hubo_acceso_correcto</code> da <code>True</code>, así que se etiqueta como <code>CRÍTICO</code>, no como una simple alerta.</details>
-
-**15.** *(Sobre el reto de la unidad)* Tienes esta configuración de línea de comandos:
-
-```python
-import argparse
-
-ap = argparse.ArgumentParser()
-ap.add_argument("log")
-ap.add_argument("--umbral", type=int, default=5)
-args = ap.parse_args(["log.txt"])   # sin pasar --umbral
-
-print(args.umbral)
-```
-
-¿Qué imprime?
-
-A) `None`
-B) `5`
-C) Lanza un error porque `--umbral` es obligatorio
-D) `0`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Como <code>--umbral</code> no se indicó al llamar al programa, <code>argparse</code> usa el valor <code>default=5</code> definido en el propio <code>add_argument</code>.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> El hash de `b"hola"` no está en la base de firmas, así que <code>.get</code> devuelve el valor por defecto <code>"limpio"</code>.</details>

@@ -45,7 +45,7 @@ nav:
   - El curso de un vistazo: el-curso.md
   - 1.º trimestre:
       - 1 · Fundamentos, criptografía y forense (RA1): ud1/index.md
-      - 2 · Seguridad activa, malware y red (RA2): ud2/index.md
+      - 2 · Seguridad activa: defender un sistema (RA2): ud2/index.md
       - 3 · Seguridad perimetral y acceso remoto (RA3): ud3/index.md
   - 2.º trimestre:
       - 4 · Riesgos, bastionado y autenticación (RA4): ud4/index.md
