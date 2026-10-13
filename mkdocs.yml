@@ -1,0 +1,87 @@
+site_name: CMO-314 · Ciberseguridad
+site_description: Materiales, actividades y proyectos del alumnado
+site_author: Departamento de Informática
+docs_dir: docs
+
+theme:
+  name: material
+  language: es
+  font: false          # tipografía del sistema → funciona 100 % offline
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.instant
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Modo oscuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Modo claro
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/imprimir.js
+
+hooks:
+  - hooks/pagina_completa.py
+
+nav:
+  - Inicio: index.md
+  - El curso de un vistazo: el-curso.md
+  - 1.º trimestre:
+      - 1 · Fundamentos, criptografía y forense (RA1): ud1/index.md
+      - 2 · Seguridad activa: defender un sistema (RA2): ud2/index.md
+      - 3 · Seguridad perimetral y acceso remoto (RA3): ud3/index.md
+  - 2.º trimestre:
+      - 4 · Riesgos, bastionado y autenticación (RA4): ud4/index.md
+      - 5 · Hacking ético en laboratorio (RA5): ud5/index.md
+      - 6 · Normativa y protección de datos (RA6): ud6/index.md
+  - Recursos:
+      - Entorno y laboratorio: recursos/entorno.md
+      - Uso ético y legal: recursos/uso-etico.md
+      - Python para ciberseguridad: recursos/python-ciberseguridad.md
+      - Retos (código y tests): proyectos/index.md
+  - Retos de programación: retos/index.md
+  - Todo el material (PDF): completo.md
+
+plugins:
+  - search:
+      lang: es
+  - offline
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
