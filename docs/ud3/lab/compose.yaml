@@ -1,0 +1,29 @@
+services:
+  # Pasarela: única cara visible. Está en la DMZ (publicada) y en la red interna.
+  nginx:
+    build: ./nginx
+    ports:
+      - "8080:80"      # HTTP del host -> redirige a HTTPS
+      - "8443:443"     # HTTPS del host -> pasarela
+    volumes:
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - dmz
+      - interna
+    depends_on:
+      - api
+    security_opt:
+      - no-new-privileges:true
+
+  # API: SOLO en la red interna. No tiene 'ports', así que el host no la ve.
+  api:
+    build: ./api
+    networks:
+      - interna
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  dmz:
+  interna:
+    internal: true     # esta red no tiene salida a internet: aislamiento

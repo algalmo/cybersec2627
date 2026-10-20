@@ -215,7 +215,10 @@ Esto es clave para interpretar lo que ves, **sobre todo dentro de un contenedor*
 
 **Conceptos que enseña.** Lectura de procesos/memoria/conexiones; aislamiento de contenedores; mínimo privilegio; interpretación prudente de los datos.
 
-**Ficheros necesarios** (créalos en una carpeta `lab2/`):
+!!! tip "Ficheros listos para usar"
+    No tienes que copiar el código a mano: todos los ficheros de este laboratorio están en la carpeta **`labs/lab2/`** del repositorio del curso. Entra en ella y sigue las instrucciones de ejecución.
+
+**Ficheros del laboratorio** (en `labs/lab2/`):
 
 ```python title="lab2/auditor.py"
 import psutil
@@ -376,7 +379,9 @@ Puerto destino: 80
 
 Un **PCAP** (*packet capture*) es un fichero que guarda paquetes capturados. Es el formato estándar y lo que vas a analizar: es **reproducible** (siempre da el mismo resultado) y **seguro** (no capturas tráfico real de nadie). Se escribe con `wrpcap` y se lee con `rdpcap`.
 
-```python title="leer_pcap.py"
+En el laboratorio 3 lo generarás tú mismo (con `generar_pcap.py`), así que **no necesitas descargar ninguna captura externa**. Una vez creado el fichero, leerlo es tan simple como esto:
+
+```python title="leer_pcap.py (ejemplo; requiere haber generado trafico.pcap antes)"
 from scapy.all import rdpcap, IP
 
 paquetes = rdpcap("trafico.pcap")      # devuelve una lista de paquetes
@@ -393,7 +398,10 @@ for p in paquetes[:3]:                  # los 3 primeros
 
 **Conceptos que enseña.** Capas de red; lectura de PCAP; filtrado por protocolo; extracción de IP/puertos; recuento de comunicaciones.
 
-**Ficheros** (en `lab3/`):
+!!! tip "Ficheros listos para usar"
+    No tienes que copiar el código a mano: todos los ficheros de este laboratorio están en la carpeta **`labs/lab3/`** del repositorio del curso. Entra en ella y sigue las instrucciones de ejecución.
+
+**Ficheros del laboratorio** (en `labs/lab3/`):
 
 ```python title="lab3/generar_pcap.py"
 from scapy.all import Ether, IP, TCP, UDP, ICMP, DNS, DNSQR, wrpcap
@@ -612,7 +620,10 @@ El `if m:` es esencial: `re.search` devuelve `None` si la línea no encaja (por 
 
 **Conceptos que enseña.** Lectura de ficheros; extracción con regex; recuento; umbrales; interpretación prudente.
 
-**Ficheros** (en `lab4/`):
+!!! tip "Ficheros listos para usar"
+    No tienes que copiar el código a mano: todos los ficheros de este laboratorio están en la carpeta **`labs/lab4/`** del repositorio del curso. Entra en ella y sigue las instrucciones de ejecución.
+
+**Ficheros del laboratorio** (en `labs/lab4/`):
 
 ```text title="lab4/auth.log"
 2026-05-01T08:00:01 sshd: Failed password for root from 203.0.113.9 port 51000
@@ -771,7 +782,10 @@ Un `Observer` conecta ese manejador con una carpeta y se queda escuchando en seg
 
 **Conceptos que enseña.** Manejadores de eventos de ficheros; observación en segundo plano; HIDS básico; límites de la técnica.
 
-**Ficheros** (en `lab5/`):
+!!! tip "Ficheros listos para usar"
+    No tienes que copiar el código a mano: todos los ficheros de este laboratorio están en la carpeta **`labs/lab5/`** del repositorio del curso. Entra en ella y sigue las instrucciones de ejecución.
+
+**Ficheros del laboratorio** (en `labs/lab5/`):
 
 ```python title="lab5/vigilar.py"
 import sys
@@ -920,74 +934,56 @@ Cuando una alerta se confirma, la respuesta defensiva puede ser: **bloquear** la
 
 **Conceptos que enseña.** Correlación de fuentes; reglas; gravedad; registro estructurado; justificación de decisiones.
 
-**Ficheros** (en `lab6/`):
+!!! tip "Ficheros listos para usar"
+    No tienes que copiar el código a mano: todos los ficheros de este laboratorio están en la carpeta **`labs/lab6/`** del repositorio del curso. Entra en ella y sigue las instrucciones de ejecución.
+
+**Ficheros del laboratorio** (en `labs/lab6/`):
+
+La idea es sencilla: **cuantas más fuentes distintas señalan a la misma IP, más grave es**. Una IP que solo aparece en un sitio puede ser ruido; una que aparece en los logs, en la red y en los ficheros a la vez es una amenaza seria.
 
 ```python title="lab6/correlacionar.py"
 import json
 import logging
-from dataclasses import dataclass
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("defensa")
 
-@dataclass
-class Evidencia:
-    """Una observación de una fuente (red, logs, archivos, sistema)."""
-    fuente: str          # "red", "logs", "archivos", "sistema"
-    sujeto: str          # IP, usuario, ruta de fichero...
-    detalle: str
+# Evidencias que han recogido los laboratorios anteriores, ya resumidas.
+# Cada una indica: de qué fuente viene, a qué IP señala y qué se observó.
+evidencias = [
+    {"fuente": "logs",     "ip": "203.0.113.9", "hecho": "5 fallos de login"},
+    {"fuente": "red",      "ip": "203.0.113.9", "hecho": "escaneo de 4 puertos"},
+    {"fuente": "archivos", "ip": "203.0.113.9", "hecho": "modificó /etc/passwd"},
+    {"fuente": "red",      "ip": "10.0.0.5",    "hecho": "1 conexión al puerto 80"},
+]
 
-def regla_fuerza_bruta(ev: list[Evidencia]) -> list[dict]:
-    por_ip: dict[str, int] = {}
-    for e in ev:
-        if e.fuente == "logs" and e.detalle.startswith("fallo_auth"):
-            por_ip[e.sujeto] = por_ip.get(e.sujeto, 0) + 1
-    return [{"regla": "fuerza_bruta", "sujeto": ip, "gravedad": "ALTA", "fallos": n}
-            for ip, n in por_ip.items() if n >= 3]
+# 1) Agrupamos las evidencias por IP.
+senales_por_ip: dict[str, list[dict]] = {}
+for e in evidencias:
+    senales_por_ip.setdefault(e["ip"], []).append(e)
 
-def regla_escaneo(ev: list[Evidencia]) -> list[dict]:
-    puertos_por_ip: dict[str, set[str]] = {}
-    for e in ev:
-        if e.fuente == "red" and e.detalle.startswith("syn_puerto:"):
-            puerto = e.detalle.split(":", 1)[1]
-            puertos_por_ip.setdefault(e.sujeto, set()).add(puerto)
-    return [{"regla": "escaneo_puertos", "sujeto": ip, "gravedad": "MEDIA", "puertos": len(ps)}
-            for ip, ps in puertos_por_ip.items() if len(ps) >= 3]
+# 2) Regla de correlación: más evidencias = más gravedad.
+def gravedad(n_evidencias: int) -> str:
+    if n_evidencias >= 3:
+        return "CRITICA"
+    if n_evidencias == 2:
+        return "ALTA"
+    return "BAJA"
 
-def regla_fichero_critico(ev: list[Evidencia]) -> list[dict]:
-    return [{"regla": "cambio_fichero_critico", "sujeto": e.sujeto, "gravedad": "ALTA"}
-            for e in ev if e.fuente == "archivos" and "/etc/" in e.sujeto]
+# 3) Generamos una alerta por IP y avisamos de las graves.
+alertas = []
+for ip, lista in senales_por_ip.items():
+    nivel = gravedad(len(lista))
+    alerta = {"ip": ip, "gravedad": nivel, "evidencias": [e["hecho"] for e in lista]}
+    alertas.append(alerta)
+    if nivel in ("ALTA", "CRITICA"):
+        log.warning("%s en %s -> %s", nivel, ip, ", ".join(alerta["evidencias"]))
 
-def correlacionar(ev: list[Evidencia]) -> list[dict]:
-    alertas: list[dict] = []
-    for regla in (regla_fuerza_bruta, regla_escaneo, regla_fichero_critico):
-        alertas.extend(regla(ev))
-    # Correlación: misma IP en fuerza bruta Y escaneo -> se eleva a CRÍTICA
-    ips_fb = {a["sujeto"] for a in alertas if a["regla"] == "fuerza_bruta"}
-    ips_esc = {a["sujeto"] for a in alertas if a["regla"] == "escaneo_puertos"}
-    for ip in ips_fb & ips_esc:
-        alertas.append({"regla": "ataque_coordinado", "sujeto": ip, "gravedad": "CRITICA"})
-    return alertas
+# 4) Guardamos el informe en JSON para que otra herramienta pueda procesarlo.
+with open("informe.json", "w", encoding="utf-8") as f:
+    json.dump(alertas, f, indent=2, ensure_ascii=False)
 
-if __name__ == "__main__":
-    evidencias = [
-        Evidencia("logs", "203.0.113.9", "fallo_auth:root"),
-        Evidencia("logs", "203.0.113.9", "fallo_auth:admin"),
-        Evidencia("logs", "203.0.113.9", "fallo_auth:guest"),
-        Evidencia("red",  "203.0.113.9", "syn_puerto:22"),
-        Evidencia("red",  "203.0.113.9", "syn_puerto:23"),
-        Evidencia("red",  "203.0.113.9", "syn_puerto:445"),
-        Evidencia("archivos", "/etc/passwd", "modificado"),
-        Evidencia("red",  "10.0.0.5", "syn_puerto:80"),
-    ]
-
-    alertas = correlacionar(evidencias)
-    for a in alertas:
-        log.warning("Alerta: %s", json.dumps(a, ensure_ascii=False))
-
-    with open("alertas.json", "w", encoding="utf-8") as f:
-        json.dump(alertas, f, indent=2, ensure_ascii=False)
-    print(f"\n{len(alertas)} alertas guardadas en alertas.json")
+print(f"\n{len(alertas)} IPs analizadas. Informe guardado en informe.json")
 ```
 
 ```dockerfile title="lab6/Dockerfile"
@@ -1007,29 +1003,49 @@ services:
       - no-new-privileges:true
 ```
 
-> Usa solo la biblioteca estándar (`json`, `logging`, `dataclasses`), así que no necesita `requirements.txt`.
+> Usa solo la biblioteca estándar (`json`, `logging`), así que no necesita `requirements.txt`.
 
 **Ejecución:**
 
-```bash title="Terminal (dentro de lab6/)"
+```bash title="Terminal (dentro de labs/lab6/)"
 docker compose build
 docker compose run --rm defensa
 ```
 
-**Salida esperada** (las marcas de tiempo varían):
+**Salida esperada:**
 
 ```text
-2026-05-01 08:10:00 WARNING Alerta: {"regla": "fuerza_bruta", "sujeto": "203.0.113.9", "gravedad": "ALTA", "fallos": 3}
-2026-05-01 08:10:00 WARNING Alerta: {"regla": "escaneo_puertos", "sujeto": "203.0.113.9", "gravedad": "MEDIA", "puertos": 3}
-2026-05-01 08:10:00 WARNING Alerta: {"regla": "cambio_fichero_critico", "sujeto": "/etc/passwd", "gravedad": "ALTA"}
-2026-05-01 08:10:00 WARNING Alerta: {"regla": "ataque_coordinado", "sujeto": "203.0.113.9", "gravedad": "CRITICA"}
+WARNING: CRITICA en 203.0.113.9 -> 5 fallos de login, escaneo de 4 puertos, modificó /etc/passwd
 
-4 alertas guardadas en alertas.json
+2 IPs analizadas. Informe guardado en informe.json
 ```
 
-**Explicación del resultado.** Cada regla genera su alerta: la IP `203.0.113.9` dispara fuerza bruta (3 fallos) y escaneo (3 puertos), y el cambio en `/etc/passwd` dispara la de fichero crítico. La **correlación** detecta que esa IP aparece en *dos* reglas a la vez y genera una cuarta alerta `ataque_coordinado` de gravedad **CRÍTICA** — una señal mucho más fuerte que cualquiera por separado. Las alertas quedan en JSON para que otra herramienta (o el examen) las procese. La IP `10.0.0.5`, con un solo puerto, **no** genera nada: evitamos el falso positivo.
+Y el fichero `informe.json` que genera:
 
-**Decisión defensiva justificada.** Ante la alerta CRÍTICA, la respuesta proporcionada sería: bloquear `203.0.113.9` en el firewall, revisar si algún login tuvo éxito desde esa IP, y restaurar `/etc/passwd` desde copia verificando su integridad. No se bloquea a `10.0.0.5` porque su actividad (un acceso al puerto 80) es normal.
+```json title="informe.json"
+[
+  {
+    "ip": "203.0.113.9",
+    "gravedad": "CRITICA",
+    "evidencias": [
+      "5 fallos de login",
+      "escaneo de 4 puertos",
+      "modificó /etc/passwd"
+    ]
+  },
+  {
+    "ip": "10.0.0.5",
+    "gravedad": "BAJA",
+    "evidencias": [
+      "1 conexión al puerto 80"
+    ]
+  }
+]
+```
+
+**Explicación del resultado.** La IP `203.0.113.9` aparece en **tres** fuentes distintas (logs, red y archivos), así que la correlación la marca como **CRÍTICA**: tres señales que coinciden son mucho más fiables que una sola. La IP `10.0.0.5`, con una única evidencia normal, se queda en **BAJA** y no genera aviso — así evitamos el falso positivo. El informe queda en JSON para que otra herramienta (o tú, en el examen) lo procese.
+
+**Decisión defensiva justificada.** Ante la alerta CRÍTICA, la respuesta proporcionada sería: bloquear `203.0.113.9` en el firewall, revisar si algún login tuvo éxito desde esa IP, y restaurar `/etc/passwd` desde copia verificando su integridad. No se bloquea a `10.0.0.5` porque su actividad es normal.
 
 **Errores habituales.**
 
@@ -1359,26 +1375,27 @@ D) Cifrar las alertas
 **27.** En el laboratorio 6, ¿qué hace que una IP pase a gravedad **CRÍTICA**?
 
 A) Tener un solo fallo de login
-B) Aparecer a la vez en la regla de fuerza bruta y en la de escaneo
+B) Que coincidan en ella varias evidencias de fuentes distintas (logs, red y archivos)
 C) Hacer una consulta DNS
 D) Conectarse al puerto 80
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La correlación detecta la IP en dos reglas (fuerza bruta <b>y</b> escaneo) con una intersección de conjuntos y eleva la alerta a crítica.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La correlación eleva la gravedad cuanta más coincidencia hay: 3 o más evidencias de fuentes distintas sobre la misma IP la marcan como CRÍTICA. Una sola evidencia puede ser ruido.</details>
 
-**28.** ¿Qué imprime este fragmento de la correlación?
+**28.** ¿Qué imprime este fragmento del correlador?
 
 ```python
-ips_fb = {"1.1.1.1", "2.2.2.2"}
-ips_esc = {"2.2.2.2", "3.3.3.3"}
-print(ips_fb & ips_esc)
+senales = {}
+for ev in [{"ip": "1.1.1.1"}, {"ip": "1.1.1.1"}, {"ip": "2.2.2.2"}]:
+    senales.setdefault(ev["ip"], []).append(ev)
+print({ip: len(lista) for ip, lista in senales.items()})
 ```
 
-A) `{'1.1.1.1', '3.3.3.3'}`
-B) `{'2.2.2.2'}`
-C) `set()`
-D) `{'1.1.1.1', '2.2.2.2', '3.3.3.3'}`
+A) `{'1.1.1.1': 2, '2.2.2.2': 1}`
+B) `{'1.1.1.1': 1, '2.2.2.2': 1}`
+C) `{'1.1.1.1': 3}`
+D) `{}`
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> El operador <code>&</code> entre conjuntos da la intersección: los elementos presentes en ambos. Solo <code>2.2.2.2</code> está en los dos.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> <code>setdefault</code> crea la lista la primera vez y la reutiliza después, así que <code>1.1.1.1</code> acumula 2 evidencias y <code>2.2.2.2</code> una. Es como el correlador cuenta señales por IP.</details>
 
 **29.** Se usa `logging` **y** `json` para las alertas porque:
 

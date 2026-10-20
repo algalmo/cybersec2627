@@ -1,1044 +1,623 @@
 # Unidad 3 · Seguridad perimetral y acceso remoto
 
-> **Módulo:** CMO-314 · Ciberseguridad · **RA3** · **Duración:** 14 h · **Peso:** 15 % · **Herramienta:** Python 3 (tipado) + POO
-
-Hasta ahora has protegido datos (UT1) y detectado ataques leyendo logs (UT2). Esta unidad va de **decidir qué tráfico entra y cuál no** — el trabajo de un cortafuegos. Y aquí cambia la herramienta principal: en vez de funciones sueltas, vas a modelar el problema con **clases** (programación orientada a objetos). Un cortafuegos real *es* un objeto con estado (sus reglas) y comportamiento (evaluar tráfico) — es el caso de uso perfecto para aprender POO con sentido, no de memoria.
-
-!!! reto "El reto de la unidad"
-    **Construye un motor de cortafuegos.** Reglas, prioridad y una política por defecto que decide cuando nada coincide. Todo lo de abajo es tu entrenamiento.
-
-```mermaid
-flowchart TB
-    A["Cortafuegos y ACL"] --> B["Tipos de cortafuegos<br/>y DMZ"]
-    B --> C["POO en Python<br/>clases y dataclasses"]
-    C --> D["Reglas como objetos"]
-    D --> E["VPN y acceso remoto"]
-    D --> P["RETO<br/>Motor de cortafuegos"]
-    style P fill:#d1fae5,color:#065f46,stroke:#10b981,stroke-width:3px
-    style A fill:#dbeafe,color:#1e3a8a,stroke:#3b82f6,stroke-width:2px
-```
-
-**Qué sabrás hacer al terminar:** explicar qué es una ACL y la política "deny by default" · diseñar una DMZ · escribir clases en Python con `@dataclass`, métodos y herencia · modelar reglas de cortafuegos como objetos que se evalúan a sí mismos · explicar VPN y AAA (autenticación, autorización, auditoría) · construir un cortafuegos evaluable por CLI, tipado y probado.
-
-**Cómo se trabaja (aula invertida):** lees la sección y ejecutas los ejemplos antes de clase → en clase resuelves las actividades y avanzas el reto en parejas.
-
----
-
-## 1. Cortafuegos y listas de control de acceso (ACL)
-
-Un **cortafuegos** filtra tráfico según reglas. Cada regla dice: si el tráfico coincide con esto, haz aquello (permitir o denegar). Las reglas se evalúan **en orden**, y la **primera que coincide gana**.
-
-```mermaid
-flowchart LR
-    T["Tráfico entrante"] --> R1{"¿Coincide<br/>regla 1?"}
-    R1 -->|sí| A1["Aplica acción 1"]
-    R1 -->|no| R2{"¿Coincide<br/>regla 2?"}
-    R2 -->|sí| A2["Aplica acción 2"]
-    R2 -->|no| Def["Política por defecto<br/>(normalmente DENEGAR)"]
-```
-
-!!! warning "La regla que nunca debes olvidar: deny by default"
-    Si el tráfico no coincide con **ninguna** regla, la política por defecto debe ser **denegar**. Un cortafuegos que "permite si no sabe qué hacer" es un cortafuegos roto — y es el error de configuración más común en el mundo real.
-
-| Campo típico de una regla | Ejemplo |
+| | |
 |---|---|
-| Acción | `PERMITIR` / `DENEGAR` |
-| Origen | una IP, una red (`10.0.20.0/24`) o `*` (cualquiera) |
-| Destino | igual que origen |
-| Puerto | un número, o `0`/`*` (cualquiera) |
+| **Resultado de aprendizaje** | RA3 · Implanta seguridad perimetral y acceso remoto |
+| **Trimestre** | 2.º |
+| **Duración** | 14 horas |
+| **Herramientas** | Docker Compose · FastAPI · Nginx · `curl` · Python |
 
-!!! reto "Reto rápido 1"
-    Tienes dos reglas: 1) `PERMITIR` cualquier origen al puerto 443. 2) `DENEGAR` todo. Si llega tráfico al puerto 22, ¿qué pasa? ¿Y si llegara la regla del puerto 22 **antes** que la de "denegar todo"?
+El **perímetro** de una red es su frontera con el exterior. Esta unidad trata de cómo se protege esa frontera (cortafuegos, DMZ, segmentación) y de cómo se permite el **acceso remoto seguro** (protocolos cifrados, pasarelas, VPN). La teoría es breve y va directa a la práctica: construirás **un único laboratorio** que monta la intranet de una empresa pequeña, con una API privada detrás de una pasarela, y comprobarás tú mismo por qué está protegida.
 
----
+!!! info "Esta unidad se evalúa con test"
+    El laboratorio es la forma de **entender** los conceptos montándolos. La calificación es un **examen tipo test**; al final tienes un simulacro.
 
-## 2. Tipos de cortafuegos y la DMZ
+```mermaid
+flowchart LR
+    T["Teoría breve<br/>perímetro · protocolos · VPN · AAA"] --> L["🧪 Laboratorio único<br/>intranet con FastAPI + Nginx + HTTPS"]
+    L --> S["📝 Simulacro de test"]
+    style L fill:#d1fae5,color:#065f46,stroke:#10b981,stroke-width:2px
+    style S fill:#dbeafe,color:#1e3a8a,stroke:#3b82f6,stroke-width:2px
+```
 
-| Tipo | Dónde mira | Ejemplo |
+# Parte 1 · Teoría
+
+## 1.1 Seguridad perimetral: Internet, red interna y DMZ
+
+Imagina una empresa como un edificio. **Internet** es la calle; la **red interna (LAN)** son las oficinas privadas donde está lo valioso (bases de datos, ficheros); y la **DMZ** (*zona desmilitarizada*) es como la **recepción**: una zona intermedia donde se atiende al público sin dejarle entrar en las oficinas.
+
+```mermaid
+flowchart LR
+    I["🌍 Internet"] -->|"solo lo permitido"| D["DMZ<br/>(recepción: pasarela, web)"]
+    D -->|"acceso controlado"| L["Red interna / LAN<br/>(oficinas: API, base de datos)"]
+    I -. "❌ nunca directo" .-> L
+    style D fill:#fef9c3,color:#854d0e
+    style L fill:#dbeafe,color:#1e3a8a
+```
+
+La regla de oro: **desde Internet nunca se llega directamente a la red interna**. Lo que da la cara (una web, una pasarela) vive en la DMZ; si alguien la compromete, todavía tiene otra barrera antes de llegar a lo importante.
+
+- **Cortafuegos (firewall):** el portero que decide qué tráfico pasa, según reglas.
+- **Segmentación de redes:** dividir la red en zonas aisladas, de modo que un problema en una no contamine las demás. Es lo que harás con las dos redes Docker del laboratorio.
+
+## 1.2 Protocolos seguros: HTTP/HTTPS, TLS y SSH
+
+| Protocolo | Para qué | ¿Cifrado? |
 |---|---|---|
-| **Filtrado de paquetes** | Cabeceras IP/puerto | `iptables`, ACL de router |
-| **Stateful** | Recuerda el estado de la conexión | La mayoría de cortafuegos actuales |
-| **Proxy / aplicación** | El contenido, no solo la cabecera | WAF, proxy inverso |
+| **HTTP** | Navegación web | ❌ No: todo viaja en claro |
+| **HTTPS** | Navegación web segura | ✅ Sí, con **TLS** |
+| **SSH** | Administración remota de un servidor (terminal) | ✅ Sí |
 
-Una **DMZ** (zona desmilitarizada) es una red intermedia para los servicios que deben ser accesibles desde Internet (un servidor web), **sin** exponer la red interna donde están los datos sensibles:
+**HTTPS** no es un protocolo nuevo: es **HTTP sobre TLS**. **TLS** (*Transport Layer Security*) es la capa que cifra la comunicación y, mediante un **certificado**, garantiza que hablas con quien crees (recuerda los certificados de la UT1). Por eso el candado del navegador significa "cifrado + identidad verificada".
+
+**SSH** (*Secure Shell*) permite abrir una terminal en un servidor remoto de forma cifrada. Sustituyó a Telnet, que enviaba las contraseñas en claro. Un comando típico:
+
+```bash
+ssh usuario@servidor        # abre una sesión remota cifrada
+```
+
+## 1.3 VPN: una red privada sobre una pública
+
+Una **VPN** (*Virtual Private Network*) crea un **túnel cifrado** entre tu equipo y la red de la empresa a través de Internet. Es como tener un cable privado hasta la oficina, aunque estés en casa: todo lo que viaja por el túnel va cifrado y, para la red de la empresa, es como si estuvieras dentro.
 
 ```mermaid
 flowchart LR
-    I["Internet"] -->|:443| DMZ["DMZ<br/>servidor web"]
-    DMZ -->|:5432 solo si es el web| LAN["LAN interna<br/>base de datos"]
-    I -.->|DENEGADO| LAN
+    U["💻 Tu portátil<br/>(en casa)"] -->|"túnel cifrado (VPN)"| G["Pasarela VPN<br/>de la empresa"]
+    G --> L["Red interna"]
+    style G fill:#fef9c3,color:#854d0e
 ```
 
-> Fíjate: Internet **nunca** llega directamente a la LAN. Y dentro de la DMZ solo el servidor web (no cualquier cosa) puede hablar con la base de datos.
+Elementos de una VPN: el **túnel** (el canal cifrado), las **claves** (para cifrar y autenticar los extremos) y las **rutas** (qué tráfico va por el túnel y cuál no). Ejemplos reales: WireGuard, OpenVPN, IPsec.
 
----
+## 1.4 Acceso remoto: pasarelas, autenticación, autorización y control de acceso
 
-## 3. POO en Python: modelar el problema con clases
+Cuando alguien accede desde fuera, el acceso pasa por una **pasarela** (*gateway*): un único punto de entrada que concentra los controles. En el laboratorio, esa pasarela será **Nginx**. Sobre ella se aplican las **tres A (AAA)**:
 
-Hasta ahora escribías funciones sueltas que reciben datos. Una **clase** agrupa **datos** (atributos) y **comportamiento** (métodos) en un mismo objeto. Para una regla de cortafuegos, esto encaja perfecto: la regla *tiene* unos campos y *sabe* decidir si se aplica.
-
-```python title="clase_basica.py"
-class Regla:
-    def __init__(self, accion: str, puerto: int) -> None:   # (1)!
-        self.accion = accion                                  # (2)!
-        self.puerto = puerto
-
-    def permite(self, puerto: int) -> bool:                   # (3)!
-        return self.puerto == puerto and self.accion.upper() == "PERMITIR"
-
-r = Regla("permitir", 443)
-print(r.permite(443))   # (4)!
-print(r.permite(22))
-```
-
-1.  `__init__` es el **constructor**: se ejecuta al crear el objeto y recibe los datos iniciales.
-2.  `self` es el propio objeto: `self.accion` guarda el dato **en** ese objeto concreto.
-3.  Un **método**: una función que vive dentro de la clase y actúa sobre `self`.
-4.  `r.permite(443)` — le preguntas al objeto, no calculas tú por fuera.
-
-```text title="Salida"
-True
-False
-```
-
-### 3.1 `@dataclass`: la misma clase, con menos código repetitivo
-
-Escribir `__init__` a mano para cada atributo es tedioso. `@dataclass` lo genera automáticamente:
-
-```python title="dataclass_regla.py"
-from dataclasses import dataclass
-
-@dataclass
-class Regla:
-    accion: str
-    puerto: int = 0             # valor por defecto: 0 = "cualquier puerto"
-
-    def permite(self, puerto: int) -> bool:
-        return (self.puerto == 0 or self.puerto == puerto) and self.accion.upper() == "PERMITIR"
-
-r1 = Regla("PERMITIR", 443)
-r2 = Regla("DENEGAR")           # puerto usa el valor por defecto (0)
-print(r1)          # dataclass genera un __repr__ legible solo
-print(r1.permite(443), r2.permite(443))
-```
-
-```text title="Salida"
-Regla(accion='PERMITIR', puerto=443)
-True False
-```
-
-> `@dataclass` genera gratis `__init__`, `__repr__` (para que `print()` sea legible) y `__eq__` (para comparar dos reglas con `==`). Es el estándar profesional para clases que son, sobre todo, contenedores de datos.
-
-!!! reto "Reto rápido 2"
-    Añade un campo `origen: str = "*"` a `Regla` y amplía `permite` para que también lo compruebe (comodín `"*"` = cualquiera).
-
----
-
-## 4. Reglas con comodín y coincidencia por prioridad
-
-```python title="regla_comodin.py"
-from dataclasses import dataclass
-
-@dataclass
-class Regla:
-    accion: str
-    origen: str = "*"
-    destino: str = "*"
-    puerto: int = 0
-
-    def coincide(self, origen: str, destino: str, puerto: int) -> bool:
-        def encaja(valor: str, patron: str) -> bool:
-            return patron == "*" or patron == valor
-        return (encaja(origen, self.origen) and encaja(destino, self.destino)
-                and (self.puerto == 0 or self.puerto == puerto))
-
-r = Regla("PERMITIR", origen="lan", destino="web", puerto=80)
-print(r.coincide("lan", "web", 80))    # todo coincide
-print(r.coincide("wan", "web", 80))    # origen no coincide
-```
-
-```text title="Salida"
-True
-False
-```
-
-### 4.1 El cortafuegos: una clase que contiene reglas
-
-Una segunda clase que **usa** la primera — así se componen sistemas más grandes en POO:
-
-```python title="clase_cortafuegos.py"
-from dataclasses import dataclass, field
-
-@dataclass
-class Cortafuegos:
-    reglas: list[Regla] = field(default_factory=list)   # (1)!
-
-    def anadir(self, regla: Regla) -> None:
-        self.reglas.append(regla)
-
-    def evaluar(self, origen: str, destino: str, puerto: int) -> str:
-        for regla in self.reglas:                          # (2)!
-            if regla.coincide(origen, destino, puerto):
-                return regla.accion.upper()
-        return "DENEGAR"                                    # (3)!
-
-fw = Cortafuegos()
-fw.anadir(Regla("PERMITIR", origen="lan", destino="web", puerto=80))
-fw.anadir(Regla("DENEGAR"))                                 # regla "atrapa-todo"
-print(fw.evaluar("lan", "web", 80))
-print(fw.evaluar("wan", "web", 80))
-```
-
-1.  `field(default_factory=list)` es la forma correcta de dar una **lista vacía** por defecto en un dataclass — usar `reglas: list = []` directamente es un error clásico (todas las instancias compartirían la misma lista).
-2.  Recorre las reglas **en orden**: la primera que coincide decide.
-3.  Si ninguna coincide, `DENEGAR` — la política por defecto de la sección 1.
-
-```text title="Salida"
-PERMITIR
-DENEGAR
-```
-
-!!! analogia "Analogía"
-    Un objeto `Cortafuegos` es como un guardia con una lista de instrucciones en la mano: las lee de arriba abajo y, en cuanto una encaja, actúa — no sigue mirando el resto. Si llega al final de la lista sin que nada encaje, aplica la instrucción por defecto: "si no está permitido explícitamente, no pasa".
-
-!!! reto "Reto rápido 3"
-    Si añades la regla `DENEGAR` (atrapa-todo) **antes** que la de `PERMITIR`, ¿qué evalúa `fw.evaluar("lan","web",80)`? ¿Por qué importa tanto el orden?
-
----
-
-## 5. Herencia: especializar una regla
-
-La herencia te permite partir de una clase y **añadir** comportamiento sin reescribir lo que ya funciona:
-
-```python title="herencia.py"
-from dataclasses import dataclass
-
-@dataclass
-class ReglaHoraria(Regla):                     # hereda accion, origen, destino, puerto
-    hora_inicio: int = 0
-    hora_fin: int = 23
-
-    def activa_a_las(self, hora: int) -> bool:
-        return self.hora_inicio <= hora <= self.hora_fin
-
-r = ReglaHoraria("PERMITIR", puerto=22, hora_inicio=8, hora_fin=18)
-print(r.activa_a_las(10))   # dentro del horario laboral
-print(r.activa_a_las(22))   # fuera
-print(r.coincide("*", "*", 22))   # el método heredado sigue funcionando
-```
-
-```text title="Salida"
-True
-False
-True
-```
-
-> `ReglaHoraria` **es** una `Regla` (hereda `coincide`) y además sabe algo nuevo (`activa_a_las`). Es el principio de sustitución: en cualquier sitio donde esperes una `Regla`, una `ReglaHoraria` también vale.
-
----
-
-## 6. VPN y acceso remoto
-
-Una **VPN** (red privada virtual) cifra el tráfico entre tu equipo y una red remota, como si estuvieras físicamente dentro de ella.
-
-```mermaid
-flowchart LR
-    U["Tu equipo"] -->|"túnel cifrado<br/>(VPN)"| Gw["Gateway VPN"]
-    Gw --> LAN["Red interna<br/>de la empresa"]
-```
-
-| Concepto AAA | Responde a |
-|---|---|
-| **Authentication** (autenticación) | ¿Quién eres? |
-| **Authorization** (autorización) | ¿Qué puedes hacer? |
-| **Accounting** (auditoría) | ¿Qué hiciste, y cuándo? |
-
-!!! reto "Reto rápido 4"
-    Un empleado autentica correctamente (sabe su contraseña) pero intenta acceder a un recurso que no le corresponde. ¿Qué parte de AAA lo detiene: autenticación o autorización?
-
----
-
-## 7. Errores frecuentes (ten esto a mano)
-
-| Error | Causa | Solución |
+| | Pregunta | En el laboratorio |
 |---|---|---|
-| `reglas: list = []` en un dataclass | Lista compartida entre instancias | `field(default_factory=list)` |
-| El cortafuegos "permite todo" | Falta la regla `DENEGAR` final | Añade siempre una regla atrapa-todo al final |
-| Una regla nunca se aplica | Está **después** de otra más genérica que ya coincide | El orden importa: reglas específicas primero |
-| `AttributeError` al usar un método heredado | Olvidar `@dataclass` en la clase hija también | Decora también la subclase |
-| Comparar objetos con `==` y falla | La clase no genera `__eq__` | `@dataclass` lo da gratis; con `class` normal, defínelo tú |
+| **Autenticación** | ¿Quién eres? | La cabecera `X-Token` de la API |
+| **Autorización** | ¿Qué puedes hacer? | Sin token válido → `401` (denegado) |
+| **Auditoría** (*accounting*) | ¿Qué hiciste y cuándo? | Los registros de Nginx y de la API |
 
----
+## 1.5 Autenticación centralizada: RADIUS
 
-## 8. Actividades: de lo más sencillo a preguntas tipo examen
+En una empresa con muchos usuarios y servicios, no tiene sentido que cada servicio tenga su propia lista de contraseñas. **RADIUS** es un protocolo que **centraliza** la autenticación: los servicios preguntan a un servidor RADIUS "¿este usuario y contraseña son válidos?", y él responde. Así hay **una sola** fuente de identidades (altas, bajas y cambios en un único sitio). Se usa mucho en wifi corporativas y VPN. No lo montaremos, pero debes reconocer **qué problema resuelve**: evitar tener las credenciales repartidas por todos lados.
 
-> Librerías/técnicas reales: `dataclasses`, `ipaddress`, herencia, `field(default_factory=...)`.
+!!! note "Lo esencial de la teoría para el test"
+    DMZ = zona intermedia; Internet nunca llega directo a la LAN. HTTPS = HTTP + TLS (cifrado + identidad). SSH = terminal remota cifrada (sustituye a Telnet). VPN = túnel cifrado (túnel + claves + rutas). Pasarela = punto único de entrada. AAA = autenticación/autorización/auditoría. RADIUS = autenticación centralizada.
+# Parte 2 · Laboratorio: acceso seguro a una intranet
 
-**1 · 🟢 Un servicio como objeto** — `@dataclass class Servicio` con `nombre: str` y `puerto: int`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from dataclasses import dataclass
-@dataclass
-class Servicio:
-    nombre: str
-    puerto: int
-```
-</details>
-
-**2 · 🟢 Regla mínima** — `@dataclass class Regla` con `accion` y `puerto`, y `permite(puerto) -> bool`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from dataclasses import dataclass
-@dataclass
-class Regla:
-    accion: str
-    puerto: int
-    def permite(self, puerto: int) -> bool:
-        return self.puerto == puerto and self.accion.upper() == "PERMITIR"
-```
-</details>
-
-**3 · 🟢 ¿La IP está en la red?** — `en_red(ip: str, cidr: str) -> bool` con `ipaddress`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-import ipaddress
-def en_red(ip: str, cidr: str) -> bool:
-    return ipaddress.ip_address(ip) in ipaddress.ip_network(cidr)
-```
-</details>
-
-**4 · 🟢 Contar reglas por acción** — `contar_acciones(reglas: list[Regla]) -> dict[str,int]`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from collections import Counter
-def contar_acciones(reglas: list) -> dict[str, int]:
-    return dict(Counter(r.accion.upper() for r in reglas))
-```
-</details>
-
-**5 · 🟡 Regla con origen, destino y puerto** — `Regla` con `origen`, `destino` (ambos `"*"` por defecto) y `coincide(origen, destino, puerto) -> bool`. Esta es la versión que usarás en el resto de actividades.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from dataclasses import dataclass
-@dataclass
-class Regla:
-    accion: str
-    origen: str = "*"
-    destino: str = "*"
-    puerto: int = 0
-    def coincide(self, origen: str, destino: str, puerto: int) -> bool:
-        def encaja(v: str, p: str) -> bool:
-            return p == "*" or p == v
-        return (encaja(origen, self.origen) and encaja(destino, self.destino)
-                and (self.puerto == 0 or self.puerto == puerto))
-```
-</details>
-
-**6 · 🟡 Deny by default** — `Cortafuegos` con `anadir(regla)` y `evaluar(origen, destino, puerto)` que deniega si nada coincide.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from dataclasses import dataclass, field
-@dataclass
-class Cortafuegos:
-    reglas: list = field(default_factory=list)
-    def anadir(self, regla) -> None:
-        self.reglas.append(regla)
-    def evaluar(self, origen: str, destino: str, puerto: int) -> str:
-        for r in self.reglas:
-            if r.coincide(origen, destino, puerto):
-                return r.accion.upper()
-        return "DENEGAR"
-```
-</details>
-
-**7 · 🟡 Regla inalcanzable** — `tapada(reglas: list[tuple[str,int]], nueva: tuple[str,int]) -> bool`: ¿queda la nueva regla tapada por una anterior más genérica?
-<details class="sol"><summary>Solución</summary>
-
-```python
-def tapada(reglas: list[tuple[str, int]], nueva: tuple[str, int]) -> bool:
-    _, p = nueva
-    return any(rp in (0, p) for _, rp in reglas)
-```
-</details>
-
-**8 · 🟡 Reglas ordenadas por especificidad** — `ordenar_por_especificidad(reglas)`: las que no usan `"*"` van primero.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def ordenar_por_especificidad(reglas: list) -> list:
-    def puntuacion(r) -> int:
-        return (r.origen != "*") + (r.puerto != 0)
-    return sorted(reglas, key=puntuacion, reverse=True)
-```
-</details>
-
-**9 · 🟠 Herencia: regla con motivo** — `ReglaAuditada(Regla)` que añade `motivo: str = ""` y un método `describe() -> str`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from dataclasses import dataclass
-@dataclass
-class ReglaAuditada(Regla):
-    motivo: str = ""
-    def describe(self) -> str:
-        return f"{self.accion} puerto={self.puerto} ({self.motivo or 'sin motivo'})"
-```
-</details>
-
-**10 · 🟠 Cargar reglas desde texto** — `cargar_reglas(texto: str) -> Cortafuegos`, líneas `"PERMITIR lan web 80"`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def cargar_reglas(texto: str) -> Cortafuegos:
-    fw = Cortafuegos()
-    for ln in texto.strip().splitlines():
-        partes = ln.split()
-        accion, origen, destino = partes[0], partes[1], partes[2]
-        puerto = int(partes[3]) if len(partes) > 3 else 0
-        fw.anadir(Regla(accion, origen, destino, puerto))
-    return fw
-```
-</details>
-
-**11 · 🟠 Métricas de uso** — `impactos(fw: Cortafuegos, trafico: list[tuple]) -> dict`: cuántas veces se aplicó cada regla.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from collections import Counter
-def impactos(fw: Cortafuegos, trafico: list[tuple]) -> dict[int, int]:
-    c: Counter[int] = Counter()
-    for o, d, p in trafico:
-        for i, r in enumerate(fw.reglas):
-            if r.coincide(o, d, p):
-                c[i] += 1
-                break
-    return dict(c)
-```
-</details>
-
-**12 · 🔴 Detectar reglas duplicadas** — `duplicadas(reglas: list[Regla]) -> list[tuple[int,int]]`: pares de índices con reglas equivalentes (usa `==`, que `@dataclass` da gratis).
-<details class="sol"><summary>Solución</summary>
-
-```python
-def duplicadas(reglas: list) -> list[tuple[int, int]]:
-    pares = []
-    for i in range(len(reglas)):
-        for j in range(i + 1, len(reglas)):
-            if reglas[i] == reglas[j]:
-                pares.append((i, j))
-    return pares
-```
-</details>
-
-**13 · 🔴 Segmentación en tres zonas** — `zona(ip: str) -> str`: `"dmz"`, `"lan"` o `"externa"` según el CIDR (usa `ipaddress`).
-<details class="sol"><summary>Solución</summary>
-
-```python
-import ipaddress
-def zona(ip: str) -> str:
-    direccion = ipaddress.ip_address(ip)
-    if direccion in ipaddress.ip_network("10.0.1.0/24"):
-        return "dmz"
-    if direccion in ipaddress.ip_network("10.0.2.0/24"):
-        return "lan"
-    return "externa"
-```
-</details>
-
-**14 · 🔴 Validar deny-by-default en un conjunto de reglas** — `tiene_regla_final_deny(fw: Cortafuegos) -> bool`.
-<details class="sol"><summary>Solución</summary>
-
-```python
-def tiene_regla_final_deny(fw: Cortafuegos) -> bool:
-    if not fw.reglas:
-        return False
-    ultima = fw.reglas[-1]
-    return ultima.accion.upper() == "DENEGAR" and ultima.origen == "*" and ultima.puerto == 0
-```
-</details>
-
-**15 · 🔴 Simulación de tráfico y resumen** — `resumen(fw: Cortafuegos, trafico) -> dict[str,int]`: cuántos paquetes se permiten y cuántos se deniegan.
-<details class="sol"><summary>Solución</summary>
-
-```python
-from collections import Counter
-def resumen(fw: Cortafuegos, trafico: list[tuple]) -> dict[str, int]:
-    c: Counter[str] = Counter(fw.evaluar(o, d, p) for o, d, p in trafico)
-    return dict(c)
-```
-</details>
-
----
-
-## 9. Reto resuelto, paso a paso — Motor de cortafuegos con zonas
-
-Un cliente te pide algo muy concreto: una DMZ con un servidor web, y una LAN con una base de datos que **solo** el servidor web puede tocar. Lo construyes con POO, de principio a fin.
+Vas a montar la intranet de una empresa pequeña: una **API privada** (FastAPI) con datos de empleados, protegida detrás de una **pasarela Nginx** con **HTTPS**. La API **nunca** se expone directamente a Internet: solo se llega a ella a través de la pasarela. Comprobarás el aislamiento, los códigos HTTP y el cifrado, y automatizarás las pruebas con Python.
 
 ```mermaid
 flowchart LR
-    T["evaluar(origen, destino, puerto)"] --> B["recorre reglas<br/>en orden"]
-    B -->|coincide| Ac["devuelve accion"]
-    B -->|ninguna coincide| Def["DENEGAR"]
+    C["💻 curl / navegador"] -->|"HTTPS :8443"| N["Nginx (pasarela)<br/>DMZ"]
+    N -->|"HTTP interno :8000"| A["API FastAPI<br/>red interna"]
+    C -. "❌ no puede llegar<br/>directo a la API" .-> A
+    style N fill:#fef9c3,color:#854d0e
+    style A fill:#dbeafe,color:#1e3a8a
 ```
 
-**Paso 1 — La clase `Regla`, con comodines.**
+!!! tip "Ficheros listos para usar"
+    Todo el laboratorio está en la carpeta **`lab/`** del repositorio del curso, con esta estructura. No tienes que copiar nada a mano:
 
-```python title="cortafuegos.py"
-from dataclasses import dataclass, field
+    ```text
+    lab/
+    ├── compose.yaml              # define servicios y redes
+    ├── generar_certificado.sh    # crea el certificado de laboratorio
+    ├── pruebas.py                # pruebas de conectividad en Python
+    ├── requirements-pruebas.txt
+    ├── api/                      # la API privada (FastAPI)
+    │   ├── app.py
+    │   ├── Dockerfile
+    │   └── requirements.txt
+    └── nginx/                    # la pasarela
+        ├── nginx.conf
+        └── Dockerfile
+    ```
 
-@dataclass
-class Regla:
-    accion: str
-    origen: str = "*"
-    destino: str = "*"
-    puerto: int = 0
+## Paso 1 · Los servicios y las redes (Docker Compose)
 
-    def coincide(self, origen: str, destino: str, puerto: int) -> bool:
-        def encaja(v: str, p: str) -> bool:
-            return p == "*" or p == v
-        return (encaja(origen, self.origen) and encaja(destino, self.destino)
-                and (self.puerto == 0 or self.puerto == puerto))
+El `compose.yaml` define **dos servicios** y, sobre todo, **dos redes**, que es donde está la seguridad:
+
+```yaml title="lab/compose.yaml"
+services:
+  # Pasarela: única cara visible. Está en la DMZ (publicada) y en la red interna.
+  nginx:
+    build: ./nginx
+    ports:
+      - "8080:80"      # HTTP del host -> redirige a HTTPS
+      - "8443:443"     # HTTPS del host -> pasarela
+    volumes:
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - dmz
+      - interna
+    depends_on:
+      - api
+    security_opt:
+      - no-new-privileges:true
+
+  # API: SOLO en la red interna. No tiene 'ports', así que el host no la ve.
+  api:
+    build: ./api
+    networks:
+      - interna
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  dmz:
+  interna:
+    internal: true     # esta red no tiene salida a internet: aislamiento
 ```
 
-**Paso 2 — La clase `Cortafuegos`, que contiene reglas y decide.**
+**Lo importante:** la API **no tiene `ports`**. Eso significa que desde tu ordenador (el host) **no existe** una forma de llamarla directamente: solo es alcanzable desde dentro de la red `interna`, donde también está Nginx. La pasarela es el único puente.
 
-```python title="cortafuegos.py (continúa)"
-@dataclass
-class Cortafuegos:
-    reglas: list[Regla] = field(default_factory=list)
+## Paso 2 · La API con FastAPI
 
-    def anadir(self, regla: Regla) -> None:
-        self.reglas.append(regla)
+**FastAPI** es un framework de Python para crear APIs web rápidamente. La nuestra tiene tres *endpoints* y exige un **token** para los datos sensibles:
 
-    def evaluar(self, origen: str, destino: str, puerto: int) -> str:
-        for regla in self.reglas:
-            if regla.coincide(origen, destino, puerto):
-                return regla.accion.upper()
-        return "DENEGAR"
+```python title="lab/api/app.py"
+from fastapi import FastAPI, HTTPException, Header
+
+app = FastAPI(title="Intranet API")
+
+EMPLEADOS = {
+    1: {"nombre": "Ana García", "departamento": "Sistemas"},
+    2: {"nombre": "Luis Pérez", "departamento": "Ventas"},
+}
+TOKEN_VALIDO = "secreto-de-laboratorio"
+
+@app.get("/salud")
+def salud():
+    """Comprobación de vida del servicio (no requiere token)."""
+    return {"estado": "ok"}
+
+@app.get("/empleados")
+def listar(x_token: str = Header(default="")):
+    """Lista los empleados. Requiere cabecera X-Token válida."""
+    if x_token != TOKEN_VALIDO:
+        raise HTTPException(status_code=401, detail="token no válido")
+    return list(EMPLEADOS.values())
+
+@app.get("/empleados/{id}")
+def obtener(id: int, x_token: str = Header(default="")):
+    """Devuelve un empleado por su id. Requiere token válido."""
+    if x_token != TOKEN_VALIDO:
+        raise HTTPException(status_code=401, detail="token no válido")
+    if id not in EMPLEADOS:
+        raise HTTPException(status_code=404, detail="no existe")
+    return EMPLEADOS[id]
 ```
 
-**Paso 3 — Cargar reglas desde un fichero de texto** (así el cliente puede editar su política sin tocar código):
+- `/salud` es público: sirve para comprobar que el servicio vive.
+- `/empleados` y `/empleados/{id}` exigen la cabecera `X-Token`. Sin ella, devuelven **401** (no autorizado): esto es la **autenticación** de las AAA.
 
-```python title="cortafuegos.py (continúa)"
-def cargar_reglas(texto: str) -> Cortafuegos:
-    fw = Cortafuegos()
-    for linea in texto.strip().splitlines():
-        if not linea.strip() or linea.startswith("#"):
-            continue
-        partes = linea.split()
-        accion, origen, destino = partes[0], partes[1], partes[2]
-        puerto = int(partes[3]) if len(partes) > 3 else 0
-        fw.anadir(Regla(accion, origen, destino, puerto))
-    return fw
+## Paso 3 · Generar el certificado de laboratorio
+
+HTTPS necesita un certificado. Como es un laboratorio, creamos uno **autofirmado** (válido para pruebas, no para producción). El script usa `openssl`:
+
+```bash title="lab/generar_certificado.sh"
+#!/bin/sh
+mkdir -p nginx/certs
+openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout nginx/certs/key.pem \
+    -out nginx/certs/cert.pem \
+    -days 365 \
+    -subj "/CN=intranet.local"
+echo "Certificado creado en nginx/certs/"
 ```
 
-**Paso 4 — Simular tráfico y sacar un resumen.**
+Ejecútalo una vez antes de levantar los contenedores:
 
-```python title="cortafuegos.py (continúa)"
-from collections import Counter
-
-def resumen(fw: Cortafuegos, trafico: list[tuple[str, str, int]]) -> dict[str, int]:
-    return dict(Counter(fw.evaluar(o, d, p) for o, d, p in trafico))
+```bash title="Terminal (dentro de lab/)"
+sh generar_certificado.sh
 ```
 
-**Paso 5 — CLI con `argparse`.**
+## Paso 4 · Nginx como pasarela (sin exponer la API)
 
-```python title="cortafuegos.py (continúa)"
-import argparse
-from pathlib import Path
+Nginx recibe las peticiones de fuera y las **reenvía** a la API por la red interna. Además, obliga a usar HTTPS: si alguien entra por HTTP (puerto 80), lo redirige a HTTPS (443).
 
-def main() -> None:
-    ap = argparse.ArgumentParser(prog="cortafuegos", description="Motor de cortafuegos por reglas")
-    ap.add_argument("reglas", type=Path, help="fichero de política")
-    ap.add_argument("origen"); ap.add_argument("destino"); ap.add_argument("puerto", type=int)
-    args = ap.parse_args()
-    fw = cargar_reglas(args.reglas.read_text(encoding="utf-8"))
-    print(fw.evaluar(args.origen, args.destino, args.puerto))
+```nginx title="lab/nginx/nginx.conf"
+events {}
+
+http {
+    # Redirige todo el tráfico HTTP (80) a HTTPS (443)
+    server {
+        listen 80;
+        return 301 https://$host$request_uri;
+    }
+
+    # Punto de entrada seguro
+    server {
+        listen 443 ssl;
+        server_name intranet.local;
+
+        ssl_certificate     /etc/nginx/certs/cert.pem;
+        ssl_certificate_key /etc/nginx/certs/key.pem;
+
+        # Reenvía las peticiones a la API, que vive en la red interna
+        location / {
+            proxy_pass http://api:8000;
+            proxy_set_header Host $host;
+        }
+    }
+}
+```
+
+Fíjate en `proxy_pass http://api:8000`: Nginx llama a la API por su **nombre de servicio** (`api`), que solo se resuelve **dentro** de la red Docker. El `301` de la primera sección es una **redirección permanente** a HTTPS.
+
+**Levanta todo el laboratorio:**
+
+```bash title="Terminal (dentro de lab/)"
+docker compose up --build -d
+```
+
+## Paso 5 · Probar los endpoints con `curl` y ver los códigos HTTP
+
+Ahora comprueba el comportamiento desde fuera. La opción `-k` le dice a `curl` que acepte el certificado autofirmado (solo en laboratorio); `-i` muestra la cabecera con el código HTTP.
+
+```bash title="Terminal"
+# 1) Salud del servicio (público) -> 200 OK
+curl -k https://localhost:8443/salud
+
+# 2) Listar empleados SIN token -> 401 (no autorizado)
+curl -k -i https://localhost:8443/empleados
+
+# 3) Listar empleados CON token -> 200 OK
+curl -k -H "X-Token: secreto-de-laboratorio" https://localhost:8443/empleados
+
+# 4) Un empleado que no existe -> 404
+curl -k -H "X-Token: secreto-de-laboratorio" https://localhost:8443/empleados/99
+
+# 5) Entrar por HTTP -> 301 (redirige a HTTPS)
+curl -i http://localhost:8080/salud
+```
+
+| Petición | Código esperado | Qué demuestra |
+|---|---|---|
+| `/salud` | `200` | El servicio funciona |
+| `/empleados` sin token | `401` | La autenticación protege los datos |
+| `/empleados` con token | `200` | Con credencial válida, hay acceso |
+| `/empleados/99` | `404` | El recurso no existe |
+| `http://...` (puerto 80) | `301` | Se fuerza el uso de HTTPS |
+
+## Paso 6 · Comprobar el aislamiento entre redes
+
+Aquí se ve por qué la arquitectura es segura. Intenta llamar a la API **directamente**, saltándote la pasarela:
+
+```bash title="Terminal"
+# La API escucha en el 8000, pero DENTRO de la red interna.
+# Desde el host no hay ningún puerto publicado hacia ella:
+curl http://localhost:8000/salud
+```
+
+```text title="Resultado"
+curl: (7) Failed to connect to localhost port 8000: Connection refused
+```
+
+**No se puede.** La API no tiene ningún puerto publicado hacia el host: solo Nginx puede hablar con ella, porque comparten la red `interna`. Puedes confirmar que Nginx **sí** la alcanza desde dentro:
+
+```bash title="Terminal"
+docker compose exec nginx wget -qO- http://api:8000/salud
+```
+
+```text title="Resultado"
+{"estado":"ok"}
+```
+
+Esto es la **segmentación de redes** en acción: la API está en una zona aislada (`internal: true`, sin salida a Internet) y solo la pasarela, que hace de puente controlado, puede llegar a ella.
+
+## Paso 7 · SSH y VPN: demostración de acceso remoto
+
+La pasarela web protege el acceso a la *aplicación*. Para administrar el *servidor* se usa **SSH**, y para meter todo tu equipo *dentro* de la red de la empresa, una **VPN**.
+
+**SSH** (demostración conceptual): conectarte a un servidor sería tan simple como:
+
+```bash title="Terminal (ejemplo)"
+ssh admin@servidor-intranet       # terminal remota cifrada
+```
+
+Todo lo que escribes y recibes va cifrado. Nadie que capture el tráfico (recuerda Scapy, UT2) puede leer tu contraseña ni tus comandos, al contrario que con el antiguo Telnet.
+
+**VPN** (idea): si levantaras un servidor WireGuard en la DMZ, tu portátil establecería un túnel cifrado y entraría en la red `interna` como si estuviera físicamente en la oficina — entonces **sí** podrías llamar a `http://api:8000` directamente, porque estarías *dentro*. La VPN te convierte en un miembro más de la red interna, de forma segura.
+
+## Paso 8 · Automatizar las pruebas con Python
+
+Hacer las pruebas a mano con `curl` está bien para aprender, pero en la práctica se **automatizan**. Este script repite todas las comprobaciones y genera un informe:
+
+```python title="lab/pruebas.py"
+import json
+import requests
+
+# Atacamos SIEMPRE a la pasarela (Nginx), nunca a la API directamente.
+BASE = "https://localhost:8443"
+TOKEN = {"X-Token": "secreto-de-laboratorio"}
+
+# Certificado autofirmado de laboratorio: por eso verify=False (solo en pruebas).
+requests.packages.urllib3.disable_warnings()
+
+PRUEBAS = [
+    ("Salud del servicio (sin token)",         lambda: requests.get(f"{BASE}/salud", verify=False),                 200),
+    ("Listar empleados SIN token (denegado)",  lambda: requests.get(f"{BASE}/empleados", verify=False),             401),
+    ("Listar empleados CON token",             lambda: requests.get(f"{BASE}/empleados", headers=TOKEN, verify=False), 200),
+    ("Empleado existente CON token",           lambda: requests.get(f"{BASE}/empleados/1", headers=TOKEN, verify=False), 200),
+    ("Empleado inexistente CON token (404)",   lambda: requests.get(f"{BASE}/empleados/99", headers=TOKEN, verify=False), 404),
+]
+
+def ejecutar() -> list[dict]:
+    resultados = []
+    for descripcion, llamada, esperado in PRUEBAS:
+        try:
+            codigo = llamada().status_code
+        except requests.RequestException:
+            codigo = None
+        resultados.append({
+            "prueba": descripcion,
+            "esperado": esperado,
+            "obtenido": codigo,
+            "resultado": "OK" if codigo == esperado else "FALLO",
+        })
+    return resultados
 
 if __name__ == "__main__":
-    main()
+    resultados = ejecutar()
+    print(f"{'PRUEBA':42} {'ESPERA':7} {'OBTIENE':8} RESULTADO")
+    print("-" * 70)
+    for r in resultados:
+        print(f"{r['prueba']:42} {r['esperado']:<7} {str(r['obtenido']):<8} {r['resultado']}")
+    aciertos = sum(1 for r in resultados if r["resultado"] == "OK")
+    print("-" * 70)
+    print(f"Total: {aciertos}/{len(resultados)} pruebas correctas")
+    with open("informe.json", "w", encoding="utf-8") as f:
+        json.dump(resultados, f, indent=2, ensure_ascii=False)
+    print("Informe guardado en informe.json")
 ```
 
-**Paso 6 — Pruébalo con Docker: la política de la DMZ, sin `sudo`.**
+Ejecútalo (con el laboratorio levantado):
 
-```yaml title="docker-compose.yml"
-services:
-  demo:
-    image: python:3.12-alpine
-    volumes: ["./cortafuegos.py:/cortafuegos.py"]
-    working_dir: /app
-    command: >
-      sh -c "mkdir -p /app; cd /app;
-      printf 'PERMITIR internet dmz 443\nPERMITIR dmz lan 5432\nDENEGAR * * 0\n' > politica.txt;
-      echo '--- Internet a la DMZ (443) ---'; python /cortafuegos.py politica.txt internet dmz 443;
-      echo '--- Internet directo a la LAN ---'; python /cortafuegos.py politica.txt internet lan 5432;
-      echo '--- DMZ a la LAN (5432) ---'; python /cortafuegos.py politica.txt dmz lan 5432"
-```
-
-```bash title="Ejecutar"
-docker compose run --rm demo
+```bash title="Terminal (dentro de lab/)"
+pip install -r requirements-pruebas.txt
+python pruebas.py
 ```
 
 ```text title="Salida esperada"
---- Internet a la DMZ (443) ---
-PERMITIR
---- Internet directo a la LAN ---
-DENEGAR
---- DMZ a la LAN (5432) ---
-PERMITIR
+PRUEBA                                     ESPERA  OBTIENE  RESULTADO
+----------------------------------------------------------------------
+Salud del servicio (sin token)             200     200      OK
+Listar empleados SIN token (denegado)      401     401      OK
+Listar empleados CON token                 200     200      OK
+Empleado existente CON token               200     200      OK
+Empleado inexistente CON token (404)       404     404      OK
+----------------------------------------------------------------------
+Total: 5/5 pruebas correctas
+Informe guardado en informe.json
 ```
 
-<details class="sol"><summary>📄 cortafuegos.py completo</summary>
+**Al terminar, apaga el laboratorio:**
 
-```python
-import argparse
-from collections import Counter
-from dataclasses import dataclass, field
-from pathlib import Path
-
-@dataclass
-class Regla:
-    accion: str
-    origen: str = "*"
-    destino: str = "*"
-    puerto: int = 0
-    def coincide(self, origen: str, destino: str, puerto: int) -> bool:
-        def encaja(v: str, p: str) -> bool:
-            return p == "*" or p == v
-        return (encaja(origen, self.origen) and encaja(destino, self.destino)
-                and (self.puerto == 0 or self.puerto == puerto))
-
-@dataclass
-class Cortafuegos:
-    reglas: list[Regla] = field(default_factory=list)
-    def anadir(self, regla: Regla) -> None:
-        self.reglas.append(regla)
-    def evaluar(self, origen: str, destino: str, puerto: int) -> str:
-        for regla in self.reglas:
-            if regla.coincide(origen, destino, puerto):
-                return regla.accion.upper()
-        return "DENEGAR"
-
-def cargar_reglas(texto: str) -> Cortafuegos:
-    fw = Cortafuegos()
-    for linea in texto.strip().splitlines():
-        if not linea.strip() or linea.startswith("#"):
-            continue
-        partes = linea.split()
-        accion, origen, destino = partes[0], partes[1], partes[2]
-        puerto = int(partes[3]) if len(partes) > 3 else 0
-        fw.anadir(Regla(accion, origen, destino, puerto))
-    return fw
-
-def resumen(fw: Cortafuegos, trafico: list[tuple[str, str, int]]) -> dict[str, int]:
-    return dict(Counter(fw.evaluar(o, d, p) for o, d, p in trafico))
-
-def main() -> None:
-    ap = argparse.ArgumentParser(prog="cortafuegos", description="Motor de cortafuegos por reglas")
-    ap.add_argument("reglas", type=Path)
-    ap.add_argument("origen"); ap.add_argument("destino"); ap.add_argument("puerto", type=int)
-    args = ap.parse_args()
-    fw = cargar_reglas(args.reglas.read_text(encoding="utf-8"))
-    print(fw.evaluar(args.origen, args.destino, args.puerto))
-
-if __name__ == "__main__":
-    main()
-```
-</details>
-
----
-
-## 10. Reto para ti (propuesto, sin solución)
-
-### 🕐 Cortafuegos con reglas horarias
-
-Amplía tu motor con **`ReglaHoraria`**: reglas que solo se aplican dentro de un rango de horas (por ejemplo, el acceso remoto de mantenimiento solo debe estar `PERMITIDO` de 8:00 a 18:00).
-
-```mermaid
-flowchart TB
-    subgraph "Cortafuegos.evaluar_ahora(...)"
-    E["¿coincide origen/destino/puerto?"] -->|sí| H{"¿es ReglaHoraria?"}
-    H -->|sí| Ho["¿hora actual dentro<br/>del rango?"]
-    H -->|no| Ok["aplica la acción"]
-    Ho -->|sí| Ok
-    Ho -->|no| Sig["sigue a la<br/>siguiente regla"]
-    end
+```bash title="Terminal (dentro de lab/)"
+docker compose down
 ```
 
-**Objetivo.** Una clase `ReglaHoraria(Regla)` que añade `hora_inicio` y `hora_fin`, y un método `Cortafuegos.evaluar_ahora(origen, destino, puerto, hora)` que, si la regla que coincide es horaria, **además** comprueba que la hora está en rango — si no lo está, sigue mirando las siguientes reglas (no se detiene ahí).
+!!! success "🏅 Laboratorio completado"
+    Has montado una intranet con separación de zonas (DMZ/interna), una pasarela que obliga a HTTPS, una API privada que nadie alcanza directamente, y pruebas automatizadas que lo demuestran. Eso es seguridad perimetral real.
 
-**Requisitos**
+**Errores habituales.**
 
-- `ReglaHoraria` hereda de `Regla` (reutiliza `coincide`, no la reescribas).
-- `evaluar_ahora` recibe la hora como parámetro (no uses el reloj del sistema: así es testeable).
-- CLI con `argparse` que cargue una política de texto (reutiliza `cargar_reglas`, amplíala para reconocer una sintaxis con horas, p. ej. `PERMITIR * * 22 08-18`).
-- Código tipado, `mypy` limpio.
-- Demuéstralo con Docker: un `docker-compose.yml` que pruebe la misma regla a las 10:00 (permite) y a las 22:00 (deniega, cae a la política por defecto).
+| Síntoma | Causa | Solución |
+|---|---|---|
+| `curl` da error de certificado | Certificado autofirmado | Usa `-k` (solo en laboratorio) |
+| La API responde en `localhost:8000` | Publicaste su puerto por error | La API **no** debe tener `ports` en el compose |
+| `502 Bad Gateway` en Nginx | La API aún no había arrancado | Espera unos segundos o revisa `depends_on` |
+| `pruebas.py` falla al conectar | El laboratorio no está levantado | `docker compose up --build -d` primero |
+# Parte 3 · Resumen y evaluación
 
-**Criterios de aceptación**
+## Resumen para el examen
 
-1. Una `ReglaHoraria` fuera de horario **no bloquea** la evaluación: el motor sigue mirando las reglas siguientes.
-2. Si ninguna otra regla coincide, se aplica `DENEGAR` igual que siempre.
-3. Las reglas normales (`Regla`) siguen funcionando exactamente igual que antes (no las rompas).
-
-**Pistas** (no solución): en `evaluar_ahora`, usa `isinstance(regla, ReglaHoraria)` para saber si tienes que comprobar la hora además del resto · `ReglaHoraria` puede añadir su propio método `activa_a_las(hora) -> bool`.
-
-**Si te sobra tiempo:** añade logging de cada decisión (`accion, origen, destino, puerto, motivo`) a un fichero · genera una regla `ReglaHoraria` a partir de una cadena tipo `"08-18"` con un método de clase (`@classmethod`).
-
-> Esto es justo el tipo de reto que resolverás en el **test práctico**.
-
----
-
-## Autoevaluación rápida (conceptos)
-
-<details><summary>1. ¿Qué es "deny by default"?</summary>Que si ninguna regla coincide, la acción por defecto es denegar.</details>
-<details><summary>2. ¿Qué da <code>@dataclass</code> automáticamente?</summary><code>__init__</code>, <code>__repr__</code> y <code>__eq__</code>.</details>
-<details><summary>3. ¿Por qué importa el orden de las reglas?</summary>Porque gana la <b>primera</b> que coincide; una regla genérica antes puede "tapar" a una específica después.</details>
-<details><summary>4. ¿Qué es una DMZ?</summary>Una red intermedia para servicios accesibles desde Internet, sin exponer la LAN interna.</details>
-<details><summary>5. ¿Qué significa que una clase "hereda" de otra?</summary>Que tiene todo lo de la clase padre y puede añadir comportamiento propio.</details>
-
-## Glosario
-
-| Término | Definición |
+| Tema | Idea clave |
 |---|---|
-| **ACL** | Lista de reglas que deciden qué tráfico se permite o deniega. |
-| **Deny by default** | Política por defecto: si nada coincide, se deniega. |
-| **DMZ** | Red intermedia para servicios expuestos, aislada de la LAN. |
-| **`@dataclass`** | Decorador que genera `__init__`, `__repr__` y `__eq__` automáticamente. |
-| **Herencia** | Una clase reutiliza atributos/métodos de otra y añade los suyos. |
-| **AAA** | Autenticación, Autorización, Auditoría (Accounting). |
+| DMZ | Zona intermedia (recepción); Internet nunca llega directo a la LAN |
+| Cortafuegos | Filtra el tráfico según reglas |
+| Segmentación | Dividir la red en zonas aisladas (las dos redes Docker) |
+| HTTP / HTTPS | HTTPS = HTTP + TLS (cifrado + identidad por certificado) |
+| SSH | Terminal remota cifrada; sustituye a Telnet |
+| VPN | Túnel cifrado sobre Internet; túnel + claves + rutas |
+| Pasarela (gateway) | Punto único de entrada donde se concentran los controles (Nginx) |
+| AAA | Autenticación (¿quién?) · Autorización (¿qué puede?) · Auditoría (¿qué hizo?) |
+| RADIUS | Autenticación centralizada: una sola fuente de identidades |
+| Códigos HTTP | 200 OK · 301 redirección · 401 no autorizado · 404 no encontrado |
 
-## Cómo se evalúa esta unidad (RA3)
+## Cómo se evalúa esta unidad
 
-El instrumento principal es un **test práctico**: resuelves en Python un reto parecido al de esta unidad y se corrige **solo con su batería de tests** (queda abierto, como complemento, algún ejercicio práctico).
+La UT3 se evalúa con un **examen tipo test** de opción múltiple, una sola respuesta correcta.
 
-!!! reto "La nota, sin sorpresas"
-    **Nota = (tests superados ÷ total) × 10.** Se aprueba con 5.
+!!! tip "La nota, sin sorpresas"
+    **Nota = (aciertos ÷ nº de preguntas) × 10.** Los fallos no restan. Se aprueba con 5.
 
-El informe además te marca, **sin puntuar**, tres buenas prácticas: usar la técnica del RA (aquí, definir y usar **clases**), pasar `mypy` y documentar el código.
+El laboratorio no puntúa directamente, pero montarlo es la mejor preparación: casi todas las preguntas salen de lo que has visto construyéndolo.
 
----
+# Simulacro de examen tipo test
 
-## Simulacro de examen tipo test
+> 20 preguntas de opción múltiple sobre la unidad. Una sola respuesta correcta. Hazlo sin mirar y corrige al final.
 
-> 15 preguntas de opción múltiple. Cada una trae su propio código.
+**1.** ¿Qué es una **DMZ** en seguridad perimetral?
 
-**1.** ¿Qué imprime este código?
+A) La red más interna, donde está la base de datos
+B) Una zona intermedia entre Internet y la red interna, donde se colocan los servicios públicos
+C) Un tipo de cortafuegos
+D) Una VPN
 
-```python
-from dataclasses import dataclass
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La DMZ es la "recepción": aloja lo que debe ser accesible desde fuera, sin dar acceso directo a la red interna.</details>
 
-@dataclass
-class Regla:
-    accion: str
-    puerto: int = 0
+**2.** La regla de oro de la seguridad perimetral es:
 
-r1 = Regla("PERMITIR", 80)
-r2 = Regla("PERMITIR", 80)
-print(r1 == r2, r1 is r2)
-```
+A) Desde Internet nunca se llega directamente a la red interna
+B) Todo el tráfico debe ir por HTTP
+C) La base de datos debe estar en la DMZ
+D) No usar cortafuegos
 
-A) `True True`
-B) `True False`
-C) `False True`
-D) `False False`
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> Entre Internet y lo valioso siempre hay al menos una barrera (la DMZ y la pasarela).</details>
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>@dataclass</code> genera un <code>__eq__</code> que compara por valor de los campos: son iguales (<code>==</code>) aunque sean dos objetos distintos en memoria (<code>is</code> compara identidad, no valor).</details>
+**3.** ¿Qué relación hay entre **HTTPS** y **TLS**?
 
-**2.** ¿Qué imprime este código?
+A) Son lo mismo
+B) HTTPS es HTTP sobre TLS: TLS aporta el cifrado y la identidad
+C) TLS es una versión antigua de HTTPS
+D) No tienen relación
 
-```python
-class ColaMala:
-    def __init__(self, items=[]):     # valor por defecto mutable
-        self.items = items
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> HTTPS = HTTP + TLS. TLS cifra la comunicación y, con el certificado, verifica la identidad del servidor.</details>
 
-c1 = ColaMala()
-c1.items.append("a")
-c2 = ColaMala()
-print(c2.items)
-```
+**4.** ¿Para qué sirve **SSH**?
 
-A) `[]`
-B) `['a']`
-C) Lanza `AttributeError`
-D) `None`
+A) Para navegar por webs cifradas
+B) Para abrir una terminal remota cifrada en un servidor
+C) Para almacenar contraseñas
+D) Para filtrar tráfico de red
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La lista <code>[]</code> por defecto se crea <b>una sola vez</b> al definir la función, y todas las instancias que no pasan su propio valor la comparten — el mismo error que <code>reglas: list = []</code> en un <code>@dataclass</code>.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> SSH da acceso de administración remota cifrado; sustituyó a Telnet, que iba en claro.</details>
 
-**3.** ¿Qué imprime este código?
+**5.** ¿Qué define mejor una **VPN**?
 
-```python
-from dataclasses import dataclass
+A) Un antivirus de red
+B) Un túnel cifrado que conecta tu equipo con la red de la empresa a través de Internet
+C) Un servidor web
+D) Un tipo de certificado
 
-@dataclass
-class Regla:
-    accion: str
-    origen: str = "*"
-    destino: str = "*"
-    puerto: int = 0
-    def coincide(self, o, d, p):
-        def encaja(v, patron): return patron == "*" or patron == v
-        return encaja(o, self.origen) and encaja(d, self.destino) and (self.puerto == 0 or self.puerto == p)
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La VPN crea un túnel cifrado: para la red de la empresa, es como si estuvieras dentro.</details>
 
-r = Regla("PERMITIR", destino="bd", puerto=5432)
-print(r.coincide("cualquiera", "bd", 5432))
-print(r.coincide("cualquiera", "web", 5432))
-```
+**6.** Los tres elementos característicos de una VPN son:
 
-A) `True True`
-B) `True False`
-C) `False True`
-D) `False False`
+A) Usuario, contraseña y correo
+B) Túnel, claves y rutas
+C) HTTP, HTTPS y FTP
+D) CPU, memoria y disco
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>origen="*"</code> es comodín, así que cualquier origen encaja. En la primera llamada el destino (<code>"bd"</code>) coincide; en la segunda, el destino pedido es <code>"web"</code>, que no coincide con la regla.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> El túnel (canal cifrado), las claves (cifrado/autenticación) y las rutas (qué tráfico va por el túnel).</details>
 
-**4.** Un cortafuegos recorre sus reglas en orden y aplica la primera que coincide. ¿Qué imprime esto?
+**7.** Una **pasarela** (gateway) en el acceso remoto es:
 
-```python
-fw = Cortafuegos()
-fw.anadir(Regla("DENEGAR"))                    # comodín total, va primero
-fw.anadir(Regla("PERMITIR", puerto=80))
-print(fw.evaluar("x", "y", 80))
-```
+A) Un punto único de entrada donde se concentran los controles de seguridad
+B) Una copia de seguridad
+C) Un antivirus
+D) Un disco de red
 
-A) `PERMITIR`
-B) `DENEGAR`
-C) Se aplican las dos, sin sentido
-D) Lanza un error por reglas contradictorias
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> Concentra autenticación, cifrado y registro en un solo sitio. En el laboratorio, es Nginx.</details>
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La regla <code>DENEGAR</code> es un comodín total y coincide con <b>cualquier</b> tráfico; al ser la primera, se aplica y la <code>PERMITIR</code> de después nunca se alcanza — queda "tapada".</details>
+**8.** En las **AAA**, la **autorización** responde a:
 
-**5.** Con el orden invertido respecto a la pregunta anterior, ¿qué imprime esto?
+A) ¿Quién eres?
+B) ¿Qué puedes hacer?
+C) ¿Qué hiciste y cuándo?
+D) ¿Desde dónde te conectas?
 
-```python
-fw = Cortafuegos()
-fw.anadir(Regla("PERMITIR", puerto=80))
-fw.anadir(Regla("DENEGAR"))
-print(fw.evaluar("x", "y", 80))
-print(fw.evaluar("x", "y", 22))
-```
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Autenticación = quién eres; autorización = qué puedes hacer; auditoría = qué hiciste.</details>
 
-A) `PERMITIR` y `PERMITIR`
-B) `DENEGAR` y `DENEGAR`
-C) `PERMITIR` y `DENEGAR`
-D) `DENEGAR` y `PERMITIR`
+**9.** ¿Qué problema resuelve **RADIUS**?
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: C.</b> El tráfico al puerto 80 coincide con la primera regla (<code>PERMITIR</code>); el del puerto 22 no coincide con ninguna regla específica y cae en la <code>DENEGAR</code> final.</details>
+A) Cifrar el disco
+B) Centralizar la autenticación en una sola fuente de identidades
+C) Acelerar la red
+D) Detectar virus
 
-**6.** ¿Qué imprime este código?
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Evita tener las credenciales repartidas por cada servicio: altas, bajas y cambios en un único sitio.</details>
 
-```python
-from dataclasses import dataclass
+**10.** **Segmentar** una red consiste en:
 
-@dataclass
-class ReglaHoraria(Regla):          # hereda accion, origen, destino, puerto, coincide
-    hora_inicio: int = 0
-    hora_fin: int = 23
-    def activa_a_las(self, h): return self.hora_inicio <= h <= self.hora_fin
+A) Hacer copias de seguridad
+B) Dividirla en zonas aisladas para que un problema no se propague
+C) Aumentar su velocidad
+D) Cifrar los ficheros
 
-r = ReglaHoraria("PERMITIR", puerto=22, hora_inicio=9, hora_fin=17)
-print(r.coincide("*", "*", 22))
-print(r.activa_a_las(12))
-print(r.activa_a_las(20))
-```
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La segmentación limita el alcance de un incidente: cada zona está aislada de las demás.</details>
 
-A) `True True True`
-B) `True True False`
-C) `False True False`
-D) `True False False`
+**11.** En el laboratorio, la API FastAPI **no tiene `ports`** en el compose. ¿Qué consigue eso?
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>coincide</code> se hereda de <code>Regla</code> sin reescribirla y sigue funcionando; las 12:00 caen dentro del rango 9-17, las 20:00 no.</details>
+A) Que vaya más rápida
+B) Que el host no pueda llamarla directamente; solo Nginx, desde la red interna
+C) Que no necesite certificado
+D) Que se apague sola
 
-**7.** ¿Qué te da `@dataclass` **gratis**, que tendrías que escribir a mano en una clase normal con `class Regla:`?
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Sin puerto publicado, la API es inalcanzable desde fuera: solo la pasarela, que comparte la red interna, llega a ella.</details>
 
-```python
-class ReglaSinDataclass:
-    def __init__(self, accion, puerto):
-        self.accion = accion
-        self.puerto = puerto
-    # ¿qué falta aquí para poder hacer print(r) y r1 == r2?
-```
+**12.** `curl -k https://localhost:8443/empleados` devuelve **401**. ¿Qué significa?
 
-A) Nada, Python ya lo da todo por defecto
-B) `__repr__` (para que `print()` muestre algo legible) y `__eq__` (para comparar con `==`)
-C) Solo `__init__`, que ya está escrito
-D) `__del__` y `__len__`
+A) El servidor no existe
+B) Falta la autenticación (no se envió un token válido)
+C) El recurso no existe
+D) Todo correcto
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Sin ellos, <code>print(r)</code> mostraría algo como <code>&lt;__main__.ReglaSinDataclass object at 0x...&gt;</code> y <code>r1 == r2</code> compararía identidad, no valores. <code>@dataclass</code> genera ambos automáticamente, además del <code>__init__</code>.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> 401 = no autorizado: la API exige la cabecera <code>X-Token</code> y no se envió o es incorrecta.</details>
 
-**8.** ¿Qué imprime este código?
+**13.** En la configuración de Nginx, ¿qué hace `return 301 https://$host$request_uri;` en el servidor que escucha en el puerto 80?
 
-```python
-import ipaddress
+A) Bloquea el acceso
+B) Redirige el tráfico HTTP a HTTPS
+C) Devuelve un error
+D) Cifra la contraseña
 
-def en_red(ip: str, cidr: str) -> bool:
-    return ipaddress.ip_address(ip) in ipaddress.ip_network(cidr)
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Fuerza el uso de HTTPS: quien entra por HTTP es redirigido (301) a la versión segura.</details>
 
-print(en_red("172.16.5.30", "172.16.5.0/24"))
-print(en_red("172.16.6.30", "172.16.5.0/24"))
-```
+**14.** `proxy_pass http://api:8000;` funciona porque:
 
-A) `True True`
-B) `True False`
-C) `False True`
-D) `False False`
+A) `api` es una IP pública
+B) `api` es el nombre del servicio, que se resuelve dentro de la red Docker
+C) El host publica el puerto 8000
+D) Nginx adivina la dirección
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>172.16.5.0/24</code> cubre de <code>172.16.5.0</code> a <code>172.16.5.255</code>; la primera IP cae dentro, la segunda (<code>172.16.6.30</code>) está en la subred siguiente.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Docker resuelve el nombre del servicio (<code>api</code>) dentro de su red interna; por eso Nginx la encuentra y el host no.</details>
 
-**9.** ¿Qué imprime este código?
+**15.** El certificado del laboratorio es **autofirmado**. Por eso en `curl` se usa `-k`. ¿Qué implica?
 
-```python
-from collections import Counter
+A) Que el cifrado no funciona
+B) Que ninguna CA lo avala, así que el cliente no confía en él por defecto (válido solo para pruebas)
+C) Que es más seguro que uno real
+D) Que no caduca
 
-def contar_acciones(reglas) -> dict:
-    return dict(Counter(r.accion.upper() for r in reglas))
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Un autofirmado cifra igual, pero al no estar avalado por una CA el navegador/cliente desconfía; en producción se usa uno emitido por una CA.</details>
 
-reglas = [Regla("permitir"), Regla("PERMITIR"), Regla("denegar"), Regla("DENEGAR")]
-print(contar_acciones(reglas))
-```
+**16.** Intentas `curl http://localhost:8000/salud` y obtienes *Connection refused*. ¿Por qué?
 
-A) `{'permitir': 1, 'PERMITIR': 1, 'denegar': 1, 'DENEGAR': 1}`
-B) `{'PERMITIR': 2, 'DENEGAR': 2}`
-C) `{'PERMITIR': 4}`
-D) `{}`
+A) La API está rota
+B) La API no publica ningún puerto hacia el host: está aislada en la red interna
+C) Falta el token
+D) El certificado ha caducado
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>.upper()</code> normaliza <code>"permitir"</code> y <code>"PERMITIR"</code> a la misma clave antes de contar, así que se agrupan juntas.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Es el comportamiento deseado: desde el host no hay ruta a la API; demuestra el aislamiento de redes.</details>
 
-**10.** ¿Qué imprime este código?
+**17.** ¿Qué código HTTP devuelve `/empleados/99` (un id que no existe) con token válido?
 
-```python
-def tapada(reglas_anteriores: list[tuple], nueva: tuple) -> bool:
-    _, puerto_nuevo = nueva
-    return any(puerto in (0, puerto_nuevo) for _, puerto in reglas_anteriores)
-
-print(tapada([("*", 0)], ("lan", 80)))
-print(tapada([("lan", 443)], ("lan", 80)))
-```
+A) 200
+B) 301
+C) 401
+D) 404
 
-A) `True True`
-B) `True False`
-C) `False True`
-D) `False False`
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: D.</b> 404 = no encontrado: la autenticación es correcta, pero el recurso no existe.</details>
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Una regla anterior con puerto <code>0</code> (comodín) tapa cualquier regla nueva. Una regla anterior con puerto <code>443</code> no tapa una nueva de puerto <code>80</code>, porque no coinciden.</details>
+**18.** La red `interna` del compose tiene `internal: true`. ¿Qué significa?
 
-**11.** ¿Qué imprime este código?
+A) Que es más rápida
+B) Que no tiene salida a Internet: aislamiento
+C) Que solo admite HTTPS
+D) Que es la red del host
 
-```python
-def duplicadas(reglas: list) -> list[tuple[int, int]]:
-    pares = []
-    for i in range(len(reglas)):
-        for j in range(i + 1, len(reglas)):
-            if reglas[i] == reglas[j]:
-                pares.append((i, j))
-    return pares
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> <code>internal: true</code> deja la red sin acceso al exterior; refuerza el aislamiento de la zona donde vive la API.</details>
 
-reglas = [Regla("PERMITIR", puerto=80), Regla("DENEGAR"), Regla("PERMITIR", puerto=80)]
-print(duplicadas(reglas))
-```
+**19.** En `pruebas.py`, ¿por qué se dirigen todas las pruebas a `https://localhost:8443` y no al puerto de la API?
 
-A) `[]`
-B) `[(0, 1)]`
-C) `[(0, 2)]`
-D) `[(0, 1), (1, 2)]`
+A) Porque la API no funciona
+B) Porque se prueba el sistema como lo vería un cliente real: a través de la pasarela
+C) Porque es más rápido
+D) Porque la API no tiene endpoints
 
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: C.</b> Las reglas en los índices 0 y 2 son iguales (mismo <code>accion</code> y <code>puerto</code>, gracias al <code>__eq__</code> de <code>@dataclass</code>); la del índice 1 es distinta.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> Se prueba la entrada real (la pasarela HTTPS); la API directa ni siquiera es accesible desde fuera.</details>
 
-**12.** ¿Qué imprime este código?
+**20.** ¿Por qué **SSH** sustituyó a **Telnet** para administración remota?
 
-```python
-import ipaddress
+A) Porque es más rápido
+B) Porque cifra la sesión, mientras que Telnet enviaba todo (incluidas contraseñas) en claro
+C) Porque Telnet no existe
+D) Porque usa HTTP
 
-def zona(ip: str) -> str:
-    d = ipaddress.ip_address(ip)
-    if d in ipaddress.ip_network("10.0.1.0/24"):
-        return "dmz"
-    if d in ipaddress.ip_network("10.0.2.0/24"):
-        return "lan"
-    return "externa"
-
-print(zona("10.0.1.99"))
-```
-
-A) `"dmz"`
-B) `"lan"`
-C) `"externa"`
-D) Lanza una excepción
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> <code>10.0.1.99</code> pertenece a la subred <code>10.0.1.0/24</code>, que la función identifica como <code>"dmz"</code>.</details>
-
-**13.** ¿Qué imprime este código?
-
-```python
-def tiene_regla_final_deny(fw) -> bool:
-    if not fw.reglas:
-        return False
-    u = fw.reglas[-1]
-    return u.accion.upper() == "DENEGAR" and u.origen == "*" and u.puerto == 0
-
-fw = Cortafuegos()
-fw.anadir(Regla("PERMITIR", puerto=80))
-fw.anadir(Regla("DENEGAR"))
-print(tiene_regla_final_deny(fw))
-```
-
-A) `True`
-B) `False`
-C) Lanza `IndexError`
-D) `None`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> La última regla es <code>DENEGAR</code> con <code>origen="*"</code> (por defecto) y <code>puerto=0</code> (por defecto) — es un atrapa-todo final válido.</details>
-
-**14.** *(Sobre el reto de la unidad)* ¿Qué imprime este código?
-
-```python
-def cargar_reglas(texto: str) -> Cortafuegos:
-    fw = Cortafuegos()
-    for linea in texto.strip().splitlines():
-        partes = linea.split()
-        accion, origen, destino = partes[0], partes[1], partes[2]
-        puerto = int(partes[3]) if len(partes) > 3 else 0
-        fw.anadir(Regla(accion, origen, destino, puerto))
-    return fw
-
-politica = "PERMITIR internet dmz 443\nDENEGAR * * 0"
-fw = cargar_reglas(politica)
-print(fw.evaluar("internet", "dmz", 443))
-print(fw.evaluar("internet", "lan", 5432))
-```
-
-A) `PERMITIR` y `PERMITIR`
-B) `PERMITIR` y `DENEGAR`
-C) `DENEGAR` y `DENEGAR`
-D) `DENEGAR` y `PERMITIR`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> El primer tráfico coincide con la regla de permiso a la DMZ; el segundo (<code>internet → lan</code>) no coincide con ninguna regla de permiso y cae en la <code>DENEGAR</code> final.</details>
-
-**15.** *(Sobre el reto de la unidad)* ¿Qué imprime este código?
-
-```python
-from collections import Counter
-
-def resumen(fw, trafico: list[tuple]) -> dict:
-    return dict(Counter(fw.evaluar(o, d, p) for o, d, p in trafico))
-
-fw = Cortafuegos()
-fw.anadir(Regla("PERMITIR", puerto=80))
-fw.anadir(Regla("DENEGAR"))
-
-trafico = [("a", "b", 80), ("a", "b", 80), ("a", "b", 22)]
-print(resumen(fw, trafico))
-```
-
-A) `{'PERMITIR': 2, 'DENEGAR': 1}`
-B) `{'PERMITIR': 3}`
-C) `{'PERMITIR': 1, 'DENEGAR': 2}`
-D) `{80: 2, 22: 1}`
-
-<details class="sol"><summary>Ver respuesta</summary><b>Correcta: A.</b> Los dos paquetes al puerto 80 se evalúan como <code>PERMITIR</code>; el del puerto 22 no coincide con la primera regla y cae en <code>DENEGAR</code>. <code>Counter</code> agrupa los tres resultados.</details>
+<details class="sol"><summary>Ver respuesta</summary><b>Correcta: B.</b> La diferencia clave es el cifrado: con Telnet, cualquiera que capturara el tráfico leía la contraseña.</details>

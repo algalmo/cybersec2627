@@ -1,0 +1,5 @@
+services:
+  vigilante:
+    build: .
+    security_opt:
+      - no-new-privileges:true
