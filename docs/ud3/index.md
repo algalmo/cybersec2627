@@ -412,6 +412,71 @@ docker compose down
 | La API responde en `localhost:8000` | Publicaste su puerto por error | La API **no** debe tener `ports` en el compose |
 | `502 Bad Gateway` en Nginx | La API aún no había arrancado | Espera unos segundos o revisa `depends_on` |
 | `pruebas.py` falla al conectar | El laboratorio no está levantado | `docker compose up --build -d` primero |
+## 🔍 Comprueba tú mismo
+
+Has montado el laboratorio siguiendo los pasos. Ahora toca **entenderlo de verdad** experimentando y respondiendo. Intenta contestar antes de abrir cada solución.
+
+**Experimento 1 · El aislamiento.** Con el laboratorio levantado, intenta llamar a la API saltándote la pasarela, directamente por su puerto interno:
+
+```bash
+curl http://localhost:8000/salud
+```
+
+- **P1.** ¿Qué ocurre? ¿Por qué, si la API escucha en el 8000, no puedes llegar a ella desde tu máquina?
+
+<details class="sol"><summary>Respuesta</summary>Da <code>Connection refused</code>. La API <b>no publica ningún puerto</b> hacia el host (no tiene <code>ports</code> en el compose): solo es alcanzable desde dentro de la red <code>interna</code>, donde también está Nginx. Es el aislamiento de redes funcionando: desde Internet nunca se llega directo a la red interna.</details>
+
+**Experimento 2 · Los códigos HTTP.** Lanza estas tres peticiones y anota el código que devuelve cada una:
+
+```bash
+curl -k -o /dev/null -s -w "%{http_code}\n" https://localhost:8443/empleados
+curl -k -o /dev/null -s -w "%{http_code}\n" -H "X-Token: secreto-de-laboratorio" https://localhost:8443/empleados
+curl -k -o /dev/null -s -w "%{http_code}\n" -H "X-Token: secreto-de-laboratorio" https://localhost:8443/empleados/99
+```
+
+- **P2.** ¿Qué código da cada una y qué significa?
+
+<details class="sol"><summary>Respuesta</summary>La primera da <b>401</b> (no autorizado: falta el token). La segunda, <b>200</b> (con token válido, acceso correcto). La tercera, <b>404</b> (el empleado 99 no existe). El 401 es la autenticación protegiendo los datos; el 404 es un recurso inexistente.</details>
+
+**Experimento 3 · Forzar HTTPS.** Entra por HTTP (puerto 80) en vez de HTTPS:
+
+```bash
+curl -i http://localhost:8080/salud
+```
+
+- **P3.** ¿Qué código HTTP devuelve y qué hace Nginx con tu petición?
+
+<details class="sol"><summary>Respuesta</summary>Devuelve <b>301</b> (redirección permanente): Nginx está configurado para redirigir todo el tráfico HTTP a HTTPS. Así se fuerza que la comunicación siempre vaya cifrada.</details>
+
+**Experimento 4 · El certificado.** Repite una petición HTTPS **sin** la opción `-k`:
+
+```bash
+curl https://localhost:8443/salud
+```
+
+- **P4.** ¿Qué error da `curl`? ¿Por qué, y por qué en el laboratorio usamos `-k`?
+
+<details class="sol"><summary>Respuesta</summary>Da un error de certificado no confiable. El certificado es <b>autofirmado</b>: cifra igual, pero ninguna Autoridad de Certificación (CA) lo avala, así que <code>curl</code> desconfía por defecto. Con <code>-k</code> le decimos que lo acepte (solo válido en laboratorio; en producción se usa un certificado emitido por una CA).</details>
+
+**Experimento 5 · La pasarela desde dentro.** Comprueba que Nginx **sí** alcanza la API por su nombre de servicio:
+
+```bash
+docker compose exec nginx wget -qO- http://api:8000/salud
+```
+
+- **P5.** ¿Funciona? ¿Por qué Nginx puede llamar a `api:8000` y tú no?
+
+<details class="sol"><summary>Respuesta</summary>Sí, devuelve <code>{"estado":"ok"}</code>. Nginx comparte la red <code>interna</code> con la API, y Docker resuelve el nombre <code>api</code> dentro de esa red. Tú, desde el host, estás fuera de esa red, así que ese nombre no existe para ti. Es exactamente lo que hace segura la arquitectura: la pasarela es el único puente.</details>
+
+**Para pensar (sin comando).**
+
+- **P6.** Si levantaras una VPN hacia la red `interna` y te conectaras a ella, ¿podrías entonces llamar a `http://api:8000` directamente? ¿Por qué?
+
+<details class="sol"><summary>Respuesta</summary>Sí. La VPN te metería <i>dentro</i> de la red interna mediante un túnel cifrado: para la red, serías un miembro más, así que alcanzarías la API directamente. Esa es justo la función de una VPN para el teletrabajo.</details>
+
+!!! tip "➡️ Todo esto cae en el test"
+    Cada pregunta de arriba corresponde a una del simulacro: el aislamiento (P1, P5), los códigos HTTP 401/404/301 (P2, P3), el certificado autofirmado y el `-k` (P4), y la VPN (P6). Si has hecho los experimentos y entiendes las respuestas, el test de esta unidad lo tienes dominado.
+
 # Parte 3 · Resumen y evaluación
 
 ## Resumen para el examen

@@ -315,6 +315,37 @@ Ahí verás **todos** los procesos de tu sesión (y más, si lo ejecutas con pri
 | El contenedor solo ve 1 proceso | Es lo normal: aislamiento | No es un error; para ver el host, ejecuta fuera de Docker |
 | `cpu_percent` devuelve `0.0` | Llamada sin `interval` | Usa `interval=0.3` como en el ejemplo |
 
+## 🔍 Comprueba tú mismo (Lab 2)
+
+Ahora te toca a ti experimentar con el auditor. Haz estas pruebas y responde; las soluciones están en los desplegables, pero intenta contestar **antes** de abrirlos.
+
+**Experimento 1.** Abre `auditor.py` y fíjate en la línea `psutil.cpu_percent(interval=0.3)`. Crea un fichero de prueba y ejecuta esto:
+
+```python title="prueba_cpu.py"
+import psutil
+print("Primera llamada SIN interval:", psutil.cpu_percent())
+print("Llamada CON interval:", psutil.cpu_percent(interval=0.3))
+```
+
+- **P1.** ¿Qué valor da la primera llamada *sin* `interval`? ¿Por qué?
+
+<details class="sol"><summary>Respuesta</summary>Da <code>0.0</code>. Sin <code>interval</code>, la primera llamada no tiene un instante anterior con el que comparar, así que no puede calcular el porcentaje todavía. Por eso en el auditor usamos <code>interval=0.3</code>.</details>
+
+**Experimento 2.** Ejecuta el auditor **dos veces**: una dentro del contenedor (`docker compose run --rm auditor`) y otra directamente en tu máquina (`python auditor.py`).
+
+- **P2.** ¿En cuál de las dos ves más procesos? ¿Qué lo explica?
+
+<details class="sol"><summary>Respuesta</summary>En tu máquina ves muchos más. Dentro del contenedor solo se ven los procesos <b>de ese contenedor</b> (normalmente 1), porque está <b>aislado</b>. Para auditar el equipo real hay que ejecutar el script fuera de Docker.</details>
+
+**Experimento 3.** En `auditor.py`, el bucle captura `NoSuchProcess` y `AccessDenied`. Quita temporalmente ese `try/except` y vuelve a ejecutar varias veces.
+
+- **P3.** ¿Qué puede pasar? ¿Por qué el código original los captura?
+
+<details class="sol"><summary>Respuesta</summary>El programa puede romperse: un proceso puede terminar entre que se obtiene la lista y se lee su info (<code>NoSuchProcess</code>), o pertenecer a otro usuario y estar protegido (<code>AccessDenied</code>). Capturar esas excepciones hace que el auditor siga funcionando.</details>
+
+!!! tip "➡️ Esto cae en el test"
+    Las preguntas P1, P2 y P3 son exactamente del tipo que verás en el simulacro (bloque 2): el `0.0` de `cpu_percent`, el aislamiento del contenedor y por qué se capturan las excepciones. Si sabes explicarlas con tus palabras, ese bloque lo tienes.
+
 !!! note "Lo esencial del bloque 2 para el test"
     `psutil` lee procesos, CPU, memoria, conexiones y usuarios. `cpu_percent` necesita `interval`. Siempre se capturan `NoSuchProcess`/`AccessDenied`. Un contenedor ve **solo sus** procesos (aislamiento). Un proceso desconocido **no** es automáticamente malicioso.
 ---
@@ -551,6 +582,42 @@ paquetes.summary()
 | El contenedor no ve tráfico de otros | Aislamiento de red: es lo normal | Analiza un PCAP; no des por hecho que verás tráfico ajeno |
 | `qname` da error al decodificar | El paquete no tiene capa DNS | Comprueba `p.haslayer(DNS)` y `p[DNS].qd is not None` |
 
+## 🔍 Comprueba tú mismo (Lab 3)
+
+**Experimento 1.** Abre `generar_pcap.py` y **añade un paquete más**: una IP nueva, `10.0.0.9`, intentando conectarse también al puerto 3389 (escritorio remoto). Añade esta línea a la lista `paquetes`:
+
+```python
+Ether()/IP(src="10.0.0.9", dst="10.0.0.1")/TCP(sport=51003, dport=3389, flags="S"),
+```
+
+Vuelve a ejecutar `generar_pcap.py` y `analizar.py`.
+
+- **P1.** ¿Cuántos puertos distintos toca ahora `10.0.0.9`? ¿Refuerza eso la sospecha de escaneo?
+
+<details class="sol"><summary>Respuesta</summary>Ahora toca <b>cinco</b> (22, 23, 445, y el 3389 que acabas de añadir, además del patrón previo). Cuantos más puertos distintos toca una misma IP con SYN sin completar conexión, más claro es el <b>escaneo de puertos</b>.</details>
+
+**Experimento 2.** En `analizar.py`, fíjate en los filtros `p.haslayer(TCP)`, `p.haslayer(UDP)`. Prueba en un fichero aparte:
+
+```python title="prueba_capas.py"
+from scapy.all import IP, TCP, UDP
+paquete = IP()/UDP(dport=53)       # un paquete UDP (típico de DNS)
+print("¿Tiene capa TCP?:", paquete.haslayer(TCP))
+print("¿Tiene capa UDP?:", paquete.haslayer(UDP))
+```
+
+- **P2.** ¿Qué imprime? ¿Por qué `haslayer` es la clave para clasificar protocolos?
+
+<details class="sol"><summary>Respuesta</summary>Imprime <code>False</code> y <code>True</code>: el paquete tiene capa UDP pero no TCP. <code>haslayer</code> permite preguntar a cada paquete qué capas tiene y así contarlo en el protocolo correcto.</details>
+
+**Experimento 3.** Intenta analizar un fichero que **no existe**: cambia `analizar("trafico.pcap")` por `analizar("no_existe.pcap")`.
+
+- **P3.** ¿Qué pasa? ¿Y por qué en estos laboratorios usamos PCAP generados en vez de capturar en vivo?
+
+<details class="sol"><summary>Respuesta</summary>Da un error de fichero no encontrado (hay que generar el PCAP antes). Usamos PCAP generados porque son <b>reproducibles</b> y <b>seguros</b>; capturar en vivo requeriría privilegios de red (<code>CAP_NET_RAW</code>) que rompen el mínimo privilegio del contenedor, y además un contenedor no ve el tráfico de otros por compartir red Docker.</details>
+
+!!! tip "➡️ Esto cae en el test"
+    P1 (muchos SYN = escaneo), P2 (`haslayer` TCP/UDP) y P3 (por qué no se captura en vivo en Docker) son tres preguntas del bloque 3 del simulacro. Este experimento te las deja preparadas.
+
 !!! note "Lo esencial del bloque 3 para el test"
     Paquete = capas (Ethernet/IP/TCP-UDP/datos). TCP tiene saludo (S/SA/A) y garantías; UDP no. PCAP = captura guardada; `rdpcap` la lee, `wrpcap` la escribe. `haslayer()` filtra. Muchos SYN a puertos distintos = escaneo. Capturar en vivo necesita privilegios (`CAP_NET_RAW`) y no ves el tráfico ajeno por compartir red Docker.
 ---
@@ -729,6 +796,35 @@ no una prueba de ataque por sí solo.
 | `AttributeError: NoneType` | Usar `m.group()` sin comprobar `if m:` | Comprueba siempre que hubo coincidencia |
 | No detecta nada | Umbral demasiado alto | Ajusta el umbral al volumen real de tu log |
 
+## 🔍 Comprueba tú mismo (Lab 4)
+
+**Experimento 1.** El detector usa `umbral=3`. Ejecútalo cambiando el umbral: primero `umbral=2`, luego `umbral=5`. (Edita la última línea de `detectar.py`.)
+
+- **P1.** ¿Qué IPs se marcan con cada umbral? ¿Qué pasa si el umbral es demasiado bajo? ¿Y demasiado alto?
+
+<details class="sol"><summary>Respuesta</summary>Con un umbral <b>bajo</b> se marcan más IPs, incluidas las que solo fallaron un par de veces por despiste: aparecen <b>falsos positivos</b>. Con un umbral <b>alto</b>, un atacante lento puede pasar desapercibido. El umbral es un equilibrio entre ambos riesgos.</details>
+
+**Experimento 2.** Añade al final de `auth.log` una línea de acceso **correcto** desde la IP atacante:
+
+```text
+2026-05-01T08:02:00 sshd: Accepted password for root from 203.0.113.9 port 51010
+```
+
+Vuelve a ejecutar.
+
+- **P2.** ¿Cambia el número de *fallos* contados para esa IP? ¿Por qué?
+
+<details class="sol"><summary>Respuesta</summary>No cambia: el patrón solo captura líneas <code>Failed password</code>, así que la línea <code>Accepted</code> se ignora al contar fallos. (Ahora bien, en un caso real, un acceso <i>correcto</i> tras muchos fallos sería una señal aún más grave: quizá el atacante acertó.)</details>
+
+**Experimento 3.** En `detectar.py`, localiza el `if m:` que sigue a `PATRON_FALLO.search(linea)`. Quítalo (deja el cuerpo) y ejecuta.
+
+- **P3.** ¿Qué error aparece y por qué?
+
+<details class="sol"><summary>Respuesta</summary>Aparece <code>AttributeError: 'NoneType' object has no attribute 'group'</code>. Cuando una línea no encaja, <code>search</code> devuelve <code>None</code>, y al hacer <code>None.group()</code> se rompe. Por eso <b>siempre</b> se comprueba <code>if m:</code> antes de usar el resultado.</details>
+
+!!! tip "➡️ Esto cae en el test"
+    P1 (umbrales y falsos positivos), P2 (el patrón solo cuenta `Failed`) y P3 (el `if m:` tras `re.search`) son preguntas directas del bloque 4 del simulacro.
+
 !!! note "Lo esencial del bloque 4 para el test"
     `pathlib` lee, `re` extrae, `Counter` cuenta. `re.search` devuelve `None` si no encaja → comprobar `if m:`. El umbral equilibra falsos positivos y ataques no detectados. Superar un umbral = patrón a **investigar**, no prueba de ataque.
 
@@ -900,6 +996,40 @@ Vigilancia terminada.
 | Varios `MODIFICADO` por un cambio | El SO emite varios eventos al escribir | Es normal; se puede "desduplicar" por tiempo si molesta |
 | El vigilante termina enseguida | Se acabó el tiempo de `time.sleep` | Aumenta los segundos o déjalo en un bucle |
 
+## 🔍 Comprueba tú mismo (Lab 5)
+
+**Experimento 1.** Con el vigilante en marcha, abre **otra terminal** y crea tú mismo un fichero en la carpeta vigilada, luego edítalo y bórralo:
+
+```bash
+echo "hola" > vigilada/mi_prueba.txt
+echo "cambio" >> vigilada/mi_prueba.txt
+rm vigilada/mi_prueba.txt
+```
+
+- **P1.** ¿Qué tipos de evento aparecen? ¿Coinciden con tus acciones?
+
+<details class="sol"><summary>Respuesta</summary>Aparecen <code>CREADO</code>, <code>MODIFICADO</code> (puede salir más de uno) y <code>BORRADO</code>. watchdog reacciona en tiempo real a cada operación sobre el sistema de ficheros.</details>
+
+**Experimento 2.** Renombra un fichero mientras el vigilante está activo:
+
+```bash
+echo "x" > vigilada/antes.txt
+mv vigilada/antes.txt vigilada/despues.txt
+```
+
+- **P2.** ¿Cuántos eventos genera el renombrado y de qué tipo?
+
+<details class="sol"><summary>Respuesta</summary>Genera un único evento <code>RENOMBRADO</code> (<code>on_moved</code>), que incluye la ruta de origen y la de destino. No son dos eventos separados de borrado + creación.</details>
+
+**Experimento 3.** Para el vigilante (deja que termine). **Ahora, con el vigilante apagado**, crea un fichero en la carpeta. Vuelve a arrancar el vigilante.
+
+- **P3.** ¿Detecta el fichero que creaste mientras estaba apagado? ¿Qué limitación muestra esto?
+
+<details class="sol"><summary>Respuesta</summary>No lo detecta: watchdog solo ve los eventos que ocurren <b>mientras está en marcha</b>. Lo que pase con el vigilante apagado se pierde. Por eso la vigilancia de archivos es una capa más, no una garantía total, y <b>no sustituye a un antivirus</b> (que además analiza el contenido).</details>
+
+!!! tip "➡️ Esto cae en el test"
+    P1/P2 (los eventos de watchdog, el renombrado como `on_moved`) y P3 (no detecta cambios con el vigilante apagado, no sustituye al antivirus) son preguntas del bloque 5 del simulacro.
+
 !!! note "Lo esencial del bloque 5 para el test"
     `watchdog` detecta CREADO/MODIFICADO/BORRADO/MOVIDO con un `FileSystemEventHandler` + `Observer`. Es una técnica HIDS. **No** sustituye a un antivirus: avisa de que *algo cambió*, no de si es malicioso, y no ve cambios hechos mientras no estaba activo.
 
@@ -1054,6 +1184,33 @@ Y el fichero `informe.json` que genera:
 | El JSON sale con caracteres `\uXXXX` | Falta `ensure_ascii=False` | Añádelo en `json.dump`/`json.dumps` |
 | No aparece la alerta CRÍTICA | La IP no está en dos reglas | La correlación necesita coincidencia en fuerza bruta **y** escaneo |
 | `logging` no muestra nada | Nivel por encima de `WARNING` | `basicConfig(level=logging.INFO)` |
+
+## 🔍 Comprueba tú mismo (Lab 6)
+
+**Experimento 1.** En `correlacionar.py`, la IP `203.0.113.9` aparece en 3 fuentes (logs, red, archivos). **Borra** la evidencia de `archivos` (la línea del `/etc/passwd`) y vuelve a ejecutar.
+
+- **P1.** ¿Qué gravedad tiene ahora esa IP? ¿Por qué ha bajado?
+
+<details class="sol"><summary>Respuesta</summary>Baja de <code>CRITICA</code> a <code>ALTA</code>, porque ahora solo coinciden <b>2</b> evidencias en vez de 3. La regla es: cuantas más fuentes distintas señalan a la misma IP, mayor es la gravedad.</details>
+
+**Experimento 2.** Añade a la lista `evidencias` una segunda evidencia sobre `10.0.0.5` (por ejemplo, de la fuente `logs`):
+
+```python
+{"fuente": "logs", "ip": "10.0.0.5", "hecho": "2 fallos de login"},
+```
+
+- **P2.** ¿Cambia la gravedad de `10.0.0.5`? ¿Genera ahora un aviso?
+
+<details class="sol"><summary>Respuesta</summary>Sube de <code>BAJA</code> a <code>ALTA</code> (ahora tiene 2 evidencias) y, como la regla avisa de ALTA y CRÍTICA, aparece un <code>WARNING</code> para esa IP. Una sola evidencia era ruido; dos que coinciden ya es una señal.</details>
+
+**Experimento 3.** Abre el fichero `informe.json` que genera el programa.
+
+- **P3.** ¿Para qué sirve guardar las alertas en JSON además de mostrarlas con `logging`?
+
+<details class="sol"><summary>Respuesta</summary><code>logging</code> muestra las alertas <b>en tiempo real</b> para que las veas al momento; el <code>informe.json</code> las deja en un formato <b>estructurado</b> que otra herramienta (un SIEM, un script, o tú en el examen) puede leer y procesar después.</details>
+
+!!! tip "➡️ Esto cae en el test"
+    P1 (más evidencias coincidentes = más gravedad), P2 (correlación de señales) y P3 (`logging` en vivo vs `json` procesable) son preguntas del bloque 6 del simulacro.
 
 !!! note "Lo esencial del bloque 6 para el test"
     Correlacionar = juntar evidencias de varias fuentes; varias señales a la vez pesan más que una. Reglas → gravedad (BAJA/MEDIA/ALTA/CRÍTICA). `logging` registra en vivo, `json` deja las alertas procesables. Una alerta no confirma el ataque: hay que verificar y justificar la respuesta.
